@@ -1,4 +1,4 @@
-# Documentación del proyecto (Cursor)
+# Documentación del proyecto
 
 Guías de referencia para el agente y para desarrollo en **Godot 4.7**.
 
