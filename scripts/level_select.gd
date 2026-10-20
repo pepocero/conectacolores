@@ -67,6 +67,8 @@ func _build_ui() -> void:
 	var bg: Control
 	if LevelManager.current_mode == LevelManager.MODE_CHRONO:
 		bg = UIFactory.attach_crazy_background(self)
+	elif LevelManager.current_mode == LevelManager.MODE_RUBIK:
+		bg = UIFactory.attach_rubik_background(self)
 	else:
 		bg = UIFactory.attach_neon_background(self, false)
 		if LevelManager.current_mode == LevelManager.MODE_HARDCORE:

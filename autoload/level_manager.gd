@@ -5,6 +5,7 @@ const MODE_HARD := "hard"
 const MODE_HARDCORE := "hardcore"
 const MODE_CHRONO := "chrono"
 const MODE_SANDBOX := "sandbox"
+const MODE_RUBIK := "rubik"
 ## Subir al cambiar curva de parejas/layout Sandbox (no invalida fácil/difícil).
 const SANDBOX_CACHE_REV := 13
 ## Subir al cambiar la curva base de Hardcore (no invalida fácil/difícil).
@@ -13,6 +14,10 @@ const HARDCORE_CACHE_REV := 2
 const HARD_CACHE_REV := 1
 ## Subir al cambiar curva/picking de Modo Crazy (invalida caché chrono).
 const CHRONO_CACHE_REV := 2
+## Subir al cambiar pack/caras de Modo Rubik (invalida caché rubik).
+const RUBIK_CACHE_REV := 1
+## Caras por cubo en Modo Rubik.
+const RUBIK_FACE_COUNT := 6
 ## Si el score cacheado de hard/hardcore queda muy por debajo del baseline, no contagiar al siguiente.
 const HARD_PREV_SCORE_MARGIN := 4.0
 const CACHE_PATH := "user://generated_levels.json"
@@ -35,7 +40,7 @@ func _ready() -> void:
 
 
 func get_mode_ids() -> Array[String]:
-	return [MODE_EASY, MODE_HARD, MODE_HARDCORE, MODE_SANDBOX, MODE_CHRONO]
+	return [MODE_EASY, MODE_HARD, MODE_HARDCORE, MODE_SANDBOX, MODE_CHRONO, MODE_RUBIK]
 
 
 func get_mode_title(mode_id: String) -> String:
@@ -50,6 +55,8 @@ func get_mode_title(mode_id: String) -> String:
 			return "Modo Crazy"
 		MODE_SANDBOX:
 			return "Sandbox"
+		MODE_RUBIK:
+			return "Modo Rubik"
 		_:
 			return mode_id
 
@@ -61,6 +68,7 @@ func set_mode(mode_id: String) -> void:
 		and mode_id != MODE_HARDCORE
 		and mode_id != MODE_CHRONO
 		and mode_id != MODE_SANDBOX
+		and mode_id != MODE_RUBIK
 	):
 		push_warning("LevelManager: modo desconocido %s" % mode_id)
 		return
@@ -143,6 +151,8 @@ func _cache_key(level_id: int, mode_id: String = "") -> String:
 		return "%d_d%d_z%d_p%d_s%d_k%d" % [level_id, diff_bonus, custom_grid, custom_pairs, density, HARD_CACHE_REV]
 	if key == MODE_CHRONO:
 		return "%d_d%d_z%d_p%d_s%d_c%d" % [level_id, diff_bonus, custom_grid, custom_pairs, density, CHRONO_CACHE_REV]
+	if key == MODE_RUBIK:
+		return "%d_d%d_z%d_p%d_s%d_u%d" % [level_id, diff_bonus, custom_grid, custom_pairs, density, RUBIK_CACHE_REV]
 	return "%d_d%d_z%d_p%d_s%d" % [level_id, diff_bonus, custom_grid, custom_pairs, density]
 
 
@@ -207,6 +217,7 @@ func _prepare_generate(level_id: int, mode_id: String) -> Dictionary:
 		and key != MODE_HARDCORE
 		and key != MODE_CHRONO
 		and key != MODE_SANDBOX
+		and key != MODE_RUBIK
 	):
 		return {}
 
@@ -226,7 +237,7 @@ func _prepare_generate(level_id: int, mode_id: String) -> Dictionary:
 	var other_score := -1.0
 	if key == MODE_SANDBOX:
 		other_score = -1.0
-	elif key == MODE_HARDCORE:
+	elif key == MODE_HARDCORE or key == MODE_RUBIK:
 		other_score = _cached_score_or_baseline(MODE_HARD, level_id)
 	elif key == MODE_HARD:
 		other_score = _cached_score_or_baseline(MODE_EASY, level_id)
@@ -317,7 +328,12 @@ func _cached_score_or_baseline(mode_id: String, level_id: int) -> float:
 		var score := float(cached.get("difficulty_score", LevelGenerator.difficulty_score(cached)))
 		# Difícil/Hardcore: no contagiar una secuencia blanda (fallback) a los niveles siguientes.
 		if (
-			(mode_id == MODE_HARD or mode_id == MODE_HARDCORE or mode_id == MODE_CHRONO)
+			(
+				mode_id == MODE_HARD
+				or mode_id == MODE_HARDCORE
+				or mode_id == MODE_CHRONO
+				or mode_id == MODE_RUBIK
+			)
 			and score < baseline - HARD_PREV_SCORE_MARGIN
 		):
 			return baseline
@@ -346,6 +362,7 @@ func _load_cache() -> void:
 		MODE_HARDCORE: {},
 		MODE_CHRONO: {},
 		MODE_SANDBOX: {},
+		MODE_RUBIK: {},
 	}
 	_cache_loaded = true
 
@@ -368,7 +385,7 @@ func _load_cache() -> void:
 	# Otra versión del generador: Fácil/Difícil se regeneran con la curva nueva;
 	# Sandbox no depende de ella y conserva sus niveles.
 	var modes_to_load: Array = (
-		[MODE_EASY, MODE_HARD, MODE_HARDCORE, MODE_CHRONO, MODE_SANDBOX]
+		[MODE_EASY, MODE_HARD, MODE_HARDCORE, MODE_CHRONO, MODE_SANDBOX, MODE_RUBIK]
 		if same_version
 		else [MODE_SANDBOX]
 	)
@@ -399,6 +416,7 @@ func _save_cache() -> void:
 		MODE_HARDCORE: _cache.get(MODE_HARDCORE, {}),
 		MODE_CHRONO: _cache.get(MODE_CHRONO, {}),
 		MODE_SANDBOX: _cache.get(MODE_SANDBOX, {}),
+		MODE_RUBIK: _cache.get(MODE_RUBIK, {}),
 	}
 	var file := FileAccess.open(CACHE_PATH, FileAccess.WRITE)
 	if file == null:

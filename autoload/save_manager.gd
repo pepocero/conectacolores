@@ -6,10 +6,11 @@ const BACKUP_APP_ID := "conecta_colores"
 const STARTING_HINTS := 2
 const HINT_REDEEM_MIN := 8 ## Hace falta más de 7 pistas (8+).
 const PERFECT_STREAK_REWARD := 3
-const MODE_IDS: Array[String] = ["easy", "hard", "hardcore", "sandbox", "chrono"]
+const MODE_IDS: Array[String] = ["easy", "hard", "hardcore", "sandbox", "chrono", "rubik"]
+const RUBIK_FACE_COUNT := 6
 
 ## mode_id -> { last_unlocked_level, completed_levels, perfect_streak, skip_density_steps,
-## hints_remaining, total_score, streak_reward_next }
+## hints_remaining, total_score, streak_reward_next, cube_faces }
 var modes_progress: Dictionary = {}
 var last_mode: String = "easy"
 var sound_enabled: bool = true
@@ -187,11 +188,13 @@ func _apply_parsed_save_data(data: Dictionary) -> bool:
 				"streak_reward_next": true,
 				"hints_remaining": legacy_hints,
 				"total_score": legacy_score,
+				"cube_faces": {},
 			},
 			"hard": _default_mode_entry(),
 			"hardcore": _default_mode_entry(),
 			"chrono": _default_mode_entry(),
 			"sandbox": _default_mode_entry(),
+			"rubik": _default_mode_entry(),
 		}
 		last_mode = "easy"
 
@@ -221,6 +224,7 @@ func _apply_defaults() -> void:
 		"hardcore": _default_mode_entry(),
 		"chrono": _default_mode_entry(),
 		"sandbox": _default_mode_entry(),
+		"rubik": _default_mode_entry(),
 	}
 	last_mode = "easy"
 	sound_enabled = true
@@ -251,6 +255,8 @@ func _default_mode_entry() -> Dictionary:
 		"streak_reward_next": true,
 		"hints_remaining": STARTING_HINTS,
 		"total_score": 0,
+		## Rubik: level_id (str) -> bitmask de caras completadas (bits 0..5).
+		"cube_faces": {},
 	}
 
 
@@ -274,6 +280,8 @@ func _ensure_mode(mode_id: String) -> void:
 		entry["hints_remaining"] = STARTING_HINTS
 	if not entry.has("total_score"):
 		entry["total_score"] = 0
+	if typeof(entry.get("cube_faces", null)) != TYPE_DICTIONARY:
+		entry["cube_faces"] = {}
 	entry["last_unlocked_level"] = maxi(1, int(entry["last_unlocked_level"]))
 	entry["perfect_streak"] = maxi(0, int(entry["perfect_streak"]))
 	entry["skip_density_steps"] = maxi(0, int(entry["skip_density_steps"]))
@@ -565,7 +573,7 @@ func get_difficulty_bonus(mode_id: String) -> int:
 			return clampi(difficulty_bonus_hard, 0, 2)
 		"sandbox":
 			return clampi(difficulty_bonus_sandbox, 0, 2)
-		"hardcore":
+		"hardcore", "rubik":
 			return clampi(difficulty_bonus_hardcore, 0, 2)
 		_:
 			return clampi(difficulty_bonus_easy, 0, 2)
@@ -573,6 +581,66 @@ func get_difficulty_bonus(mode_id: String) -> int:
 
 func is_hardcore_unlocked() -> bool:
 	return is_level_completed(20, "hard")
+
+
+func is_rubik_unlocked() -> bool:
+	return is_hardcore_unlocked()
+
+
+func get_rubik_face_mask(level_id: int, mode_id: String = "rubik") -> int:
+	var data := _mode_data(mode_id)
+	var faces: Dictionary = data.get("cube_faces", {})
+	return clampi(int(faces.get(str(level_id), 0)), 0, (1 << RUBIK_FACE_COUNT) - 1)
+
+
+func is_rubik_face_done(level_id: int, face_index: int, mode_id: String = "rubik") -> bool:
+	if face_index < 0 or face_index >= RUBIK_FACE_COUNT:
+		return false
+	return (get_rubik_face_mask(level_id, mode_id) & (1 << face_index)) != 0
+
+
+func rubik_faces_done_count(level_id: int, mode_id: String = "rubik") -> int:
+	var mask := get_rubik_face_mask(level_id, mode_id)
+	var count := 0
+	for i in range(RUBIK_FACE_COUNT):
+		if (mask & (1 << i)) != 0:
+			count += 1
+	return count
+
+
+func is_rubik_cube_complete(level_id: int, mode_id: String = "rubik") -> bool:
+	return rubik_faces_done_count(level_id, mode_id) >= RUBIK_FACE_COUNT
+
+
+## Marca una cara resuelta. Devuelve la máscara nueva.
+func mark_rubik_face_done(level_id: int, face_index: int, mode_id: String = "rubik") -> int:
+	if face_index < 0 or face_index >= RUBIK_FACE_COUNT:
+		return get_rubik_face_mask(level_id, mode_id)
+	var key := _mode_key(mode_id)
+	var data := _mode_data(key)
+	var faces: Dictionary = data.get("cube_faces", {})
+	if typeof(faces) != TYPE_DICTIONARY:
+		faces = {}
+	var level_key := str(level_id)
+	var mask := clampi(int(faces.get(level_key, 0)), 0, (1 << RUBIK_FACE_COUNT) - 1)
+	mask |= 1 << face_index
+	faces[level_key] = mask
+	data["cube_faces"] = faces
+	modes_progress[key] = data
+	save_data()
+	return mask
+
+
+func clear_rubik_faces(level_id: int, mode_id: String = "rubik") -> void:
+	var key := _mode_key(mode_id)
+	var data := _mode_data(key)
+	var faces: Dictionary = data.get("cube_faces", {})
+	if typeof(faces) != TYPE_DICTIONARY:
+		faces = {}
+	faces.erase(str(level_id))
+	data["cube_faces"] = faces
+	modes_progress[key] = data
+	save_data()
 
 
 func write_difficulty_state(

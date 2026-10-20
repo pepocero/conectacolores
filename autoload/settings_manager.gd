@@ -94,7 +94,7 @@ func get_difficulty_bonus(mode_id: String) -> int:
 			return clampi(difficulty_bonus_hard, 0, 2)
 		"sandbox":
 			return clampi(difficulty_bonus_sandbox, 0, 2)
-		"hardcore":
+		"hardcore", "rubik":
 			return clampi(difficulty_bonus_hardcore, 0, 2)
 		_:
 			return clampi(difficulty_bonus_easy, 0, 2)

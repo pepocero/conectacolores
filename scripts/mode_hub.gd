@@ -25,6 +25,8 @@ func _build_ui() -> void:
 	var bg: Control
 	if mode_id == LevelManager.MODE_CHRONO:
 		bg = UIFactory.attach_crazy_background(self)
+	elif mode_id == LevelManager.MODE_RUBIK:
+		bg = UIFactory.attach_rubik_background(self)
 	else:
 		bg = UIFactory.attach_neon_background(self, false)
 		if mode_id == LevelManager.MODE_HARDCORE:
@@ -56,6 +58,8 @@ func _build_ui() -> void:
 		subtitle_text = "Más parejas por casilla, tablero más lleno y caminos más enredados."
 	elif mode_id == LevelManager.MODE_CHRONO:
 		subtitle_text = "Sin límite de tiempo: cada minuto cambian las bolas no unidas. Ganas solo al resolver el nivel."
+	elif mode_id == LevelManager.MODE_RUBIK:
+		subtitle_text = "Gira el cubo, elige una cara y resuélvela. Cada nivel son 6 caras muy difíciles."
 	elif mode_id == LevelManager.MODE_SANDBOX:
 		subtitle_text = "Une las rocas del mismo color con surcos. No se pueden cruzar."
 	var unlocked := SaveManager.get_last_unlocked_level(mode_id)

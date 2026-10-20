@@ -25,6 +25,7 @@ const FACIL_LETTER_COLORS: Array[Color] = [
 var _title_block: Control
 var _pill: Control
 var _hardcore_btn: GlossyButton
+var _rubik_btn: GlossyButton
 var _modes_modal: Control
 var _modes_scroll: ScrollContainer
 var _notice_overlay: Control
@@ -109,6 +110,49 @@ func _make_menu_button(text: String, base: Color, text_color: Color, icon: int, 
 	var button := GlossyButton.new()
 	button.setup(text, base, text_color, icon, icon_color, height)
 	return button
+
+
+## Textura procedural: rejilla de casillas multicolor para el botón Modo Rubik.
+func _make_rubik_grid_texture() -> Texture2D:
+	const W := 256
+	const H := 96
+	const COLS := 12
+	const ROWS := 4
+	var colors: Array[Color] = [
+		Color("C41E3A"),
+		Color("FF5800"),
+		Color("FFD500"),
+		Color("009B48"),
+		Color("0051BA"),
+		Color("FFFFFF"),
+		Color("FF8A1F"),
+		Color("2EB8FF"),
+		Color("9A52E6"),
+		Color("FF4FB0"),
+		Color("3DDC97"),
+		Color("FFE14A"),
+	]
+	var img := Image.create(W, H, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.08, 0.1, 0.16))
+	var cell_w := float(W) / float(COLS)
+	var cell_h := float(H) / float(ROWS)
+	var gap := 2
+	for y in range(ROWS):
+		for x in range(COLS):
+			var c: Color = colors[(x + y * 3) % colors.size()]
+			# Variación ligera para que no parezca plano.
+			if ((x + y) % 2) == 0:
+				c = c.lightened(0.08)
+			else:
+				c = c.darkened(0.06)
+			var r := Rect2i(
+				int(x * cell_w) + gap,
+				int(y * cell_h) + gap,
+				maxi(1, int(cell_w) - gap * 2),
+				maxi(1, int(cell_h) - gap * 2)
+			)
+			img.fill_rect(r, c)
+	return ImageTexture.create_from_image(img)
 
 
 func _make_title_block() -> Control:
@@ -220,6 +264,8 @@ func _play_intro(nodes: Array) -> void:
 func _refresh_progress() -> void:
 	if _hardcore_btn != null:
 		_hardcore_btn.set_locked(not SaveManager.is_hardcore_unlocked())
+	if _rubik_btn != null:
+		_rubik_btn.set_locked(not SaveManager.is_rubik_unlocked())
 
 
 func _open_modes_modal() -> void:
@@ -263,6 +309,14 @@ func _open_sandbox() -> void:
 
 func _open_chrono() -> void:
 	_open_mode(LevelManager.MODE_CHRONO)
+
+
+func _open_rubik() -> void:
+	if not SaveManager.is_rubik_unlocked():
+		AudioManager.play(AudioManager.Sfx.INVALID)
+		_show_notice_overlay("Completa el nivel 20 de Difícil para desbloquear Modo Rubik.")
+		return
+	_open_mode(LevelManager.MODE_RUBIK)
 
 
 func _open_mode(mode_id: String) -> void:
@@ -372,6 +426,13 @@ func _build_modes_modal() -> void:
 		chrono_btn.set_fill_texture(crazy_tex)
 	chrono_btn.pressed.connect(_open_chrono)
 	buttons.add_child(chrono_btn)
+
+	_rubik_btn = _make_menu_button("MODO RUBIK", Color("2ECC71"), Color.WHITE, GlossyButton.Icon.PLAY, Color.WHITE, 88.0)
+	var rubik_tex := _make_rubik_grid_texture()
+	if rubik_tex != null:
+		_rubik_btn.set_fill_texture(rubik_tex)
+	_rubik_btn.pressed.connect(_open_rubik)
+	buttons.add_child(_rubik_btn)
 
 	var close_btn := UIFactory.make_button("CERRAR", 90)
 	UIFactory.set_button_colors(close_btn, GamePalette.MENU_BLUE, Color.WHITE)

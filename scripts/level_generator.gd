@@ -107,12 +107,14 @@ const DIRS: Array[Vector2i] = [
 
 static func params_for(mode_id: String, level_id: int) -> Dictionary:
 	var is_chrono := mode_id == "chrono"
+	var is_rubik := mode_id == "rubik"
 	## Crazy 1 ≡ Difícil 90; Crazy N ≡ Difícil N+89.
 	var n := maxi(1, level_id + CHRONO_HARD_LEVEL_OFFSET) if is_chrono else maxi(1, level_id)
 	var is_hard := mode_id == "hard" or is_chrono
-	var is_hardcore := mode_id == "hardcore"
+	var is_hardcore := mode_id == "hardcore" or is_rubik
 	## Crazy usa curva Difícil (en el nivel equivalente) + techos Hardcore.
-	var curve_mode := "hard" if is_chrono else mode_id
+	## Rubik usa curva Hardcore.
+	var curve_mode := "hard" if is_chrono else ("hardcore" if is_rubik else mode_id)
 
 	var size := 5
 	var colors := 2
@@ -220,7 +222,7 @@ static func params_for(mode_id: String, level_id: int) -> Dictionary:
 static func max_size_for(mode_id: String) -> int:
 	return (
 		MAX_SIZE_HARD
-		if mode_id == "hard" or mode_id == "hardcore" or mode_id == "chrono"
+		if mode_id == "hard" or mode_id == "hardcore" or mode_id == "chrono" or mode_id == "rubik"
 		else MAX_SIZE_EASY
 	)
 
@@ -357,6 +359,17 @@ static func difficulty_score(level: Dictionary, _min_cover: float = -1.0) -> flo
 	if str(level.get("mode", "")) == "sandbox" or typeof(level.get("rocks", null)) == TYPE_ARRAY:
 		var rocks: Array = level.get("rocks", [])
 		return _sandbox_layout_score(rocks, int(level.get("id", 1)))
+	if str(level.get("mode", "")) == "rubik" or typeof(level.get("faces", null)) == TYPE_ARRAY:
+		var faces_v: Variant = level.get("faces", null)
+		if typeof(faces_v) == TYPE_ARRAY:
+			var faces: Array = faces_v
+			if not faces.is_empty():
+				var sum := 0.0
+				for face_v: Variant in faces:
+					if typeof(face_v) == TYPE_DICTIONARY:
+						sum += difficulty_score(face_v as Dictionary)
+				return sum / float(faces.size())
+		return float(level.get("difficulty_score", 0.0))
 	var metrics: Dictionary
 	if typeof(level.get("metrics", null)) == TYPE_DICTIONARY:
 		metrics = level["metrics"]
@@ -549,6 +562,8 @@ static func make_seed(mode_id: String, level_id: int, attempt: int) -> int:
 		mode_n = 3
 	elif mode_id == "chrono":
 		mode_n = 4
+	elif mode_id == "rubik":
+		mode_n = 5
 	var diff_bonus := 0
 	var custom_grid := 0
 	var custom_pairs := 0
@@ -577,6 +592,8 @@ static func level_name(mode_id: String, level_id: int) -> String:
 		return "Hardcore %d" % level_id
 	if mode_id == "chrono":
 		return "Crazy %d" % level_id
+	if mode_id == "rubik":
+		return "Cubo %d" % level_id
 	return "Nivel %d" % level_id
 
 
@@ -621,6 +638,8 @@ static func generate(
 ) -> Dictionary:
 	if mode_id == "sandbox":
 		return generate_sandbox(level_id, prev_score)
+	if mode_id == "rubik":
+		return generate_rubik(level_id, prev_score, other_mode_score)
 
 	var params := params_for(mode_id, level_id)
 	var name := level_name(mode_id, level_id)
@@ -1621,6 +1640,51 @@ static func _sandbox_solution_is_planar(rocks: Array, solution: Dictionary) -> b
 	return colors.size() == by_color.size()
 
 
+## Pack Rubik: 6 caras independientes con curva Hardcore y semillas distintas.
+static func generate_rubik(
+	level_id: int,
+	prev_score: float = -1.0,
+	other_mode_score: float = -1.0
+) -> Dictionary:
+	var faces: Array = []
+	var score_sum := 0.0
+	var par_sum := 0
+	var max_size := 2
+	for face_i in range(6):
+		var face := generate_with_salt(
+			"rubik",
+			level_id,
+			1000 + face_i * 97 + level_id * 13,
+			prev_score,
+			other_mode_score
+		)
+		if face.is_empty() or not is_solvable(face):
+			# Fallback: generación hardcore completa (misma curva).
+			face = generate("hardcore", level_id, prev_score, other_mode_score)
+		if face.is_empty() or not is_solvable(face):
+			push_error("LevelGenerator: no se pudo generar cara Rubik %d del cubo %d" % [face_i, level_id])
+			return {}
+		face["id"] = level_id
+		face["face"] = face_i
+		face["name"] = "%s · Cara %d" % [level_name("rubik", level_id), face_i + 1]
+		faces.append(face)
+		score_sum += float(face.get("difficulty_score", difficulty_score(face)))
+		par_sum += int(face.get("par", 20))
+		max_size = maxi(max_size, int(face.get("size", 2)))
+
+	return {
+		"id": level_id,
+		"name": level_name("rubik", level_id),
+		"mode": "rubik",
+		"faces": faces,
+		"size": max_size,
+		"par": par_sum,
+		"difficulty_score": score_sum / 6.0,
+		"dots": [],
+		"solution": {},
+	}
+
+
 static func generate_sandbox(level_id: int, prev_score: float = -1.0) -> Dictionary:
 	var params := sandbox_params_for(level_id)
 	var pair_count := int(params.pairs)
@@ -1807,6 +1871,24 @@ static func is_solvable(level: Dictionary) -> bool:
 	# Formato Sandbox: rocas normalizadas, 2 por color.
 	if str(level.get("mode", "")) == "sandbox" or typeof(level.get("rocks", null)) == TYPE_ARRAY:
 		return _is_sandbox_solvable(level)
+
+	# Pack Rubik: 6 caras Flow válidas.
+	if str(level.get("mode", "")) == "rubik" or typeof(level.get("faces", null)) == TYPE_ARRAY:
+		var faces_v: Variant = level.get("faces", null)
+		if typeof(faces_v) != TYPE_ARRAY:
+			return false
+		var faces: Array = faces_v
+		if faces.size() != 6:
+			return false
+		for face_v: Variant in faces:
+			if typeof(face_v) != TYPE_DICTIONARY:
+				return false
+			var face: Dictionary = face_v
+			if str(face.get("mode", "")) == "rubik":
+				return false
+			if not is_solvable(face):
+				return false
+		return true
 
 	var size := int(level.get("size", 0))
 	if size < 2:
@@ -2039,6 +2121,9 @@ static func generate_with_salt(
 		_attach_metrics(level)
 		return level
 	# Último recurso: generador normal (determinista).
+	# Rubik no puede recursar a generate("rubik") (pack de 6 caras).
+	if mode_id == "rubik":
+		return generate("hardcore", level_id, prev_score, other_mode_score)
 	return generate(mode_id, level_id, prev_score, other_mode_score)
 
 

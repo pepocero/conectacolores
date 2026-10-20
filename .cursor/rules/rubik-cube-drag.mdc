@@ -1,0 +1,22 @@
+---
+description: Dirección del arrastre del cubo 3D en Modo Rubik (arriba/abajo natural, órbita infinita)
+globs: scripts/rubik_cube_view.gd
+alwaysApply: false
+---
+
+# Modo Rubik — dirección del arrastre del cubo 3D
+
+En [`scripts/rubik_cube_view.gd`](scripts/rubik_cube_view.gd):
+
+**REGLA FIJA (no invertir nunca):**
+- Arrastrar **hacia abajo** → el cubo **gira hacia abajo**
+- Arrastrar **hacia arriba** → el cubo **gira hacia arriba**
+- Horizontal y vertical: órbita **libre / infinita** (sin clamp)
+
+Implementación correcta del pitch (confirmada en juego):
+
+```gdscript
+_pitch += rel.y * DRAG_SENS
+```
+
+`rel.y` positivo = dedo hacia abajo en pantalla. **No** usar `_pitch -= rel.y`.

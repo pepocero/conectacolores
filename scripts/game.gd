@@ -3,6 +3,7 @@ extends Control
 const VictoryOverlayScript := preload("res://scripts/victory_overlay.gd")
 const LoadingOverlayScript := preload("res://scripts/loading_overlay.gd")
 const EraTransitionScript := preload("res://scripts/era_transition.gd")
+const RubikCubeViewScript := preload("res://scripts/rubik_cube_view.gd")
 
 ## Segunda palabra del título (FÁCIL / DIFÍCIL): degradado cálido → frío.
 const TITLE_LETTER_COLORS: Array[Color] = [
@@ -45,6 +46,7 @@ var _loading: Control
 var _confirm_overlay: Control
 var _confirm_message: Label
 var _notice_overlay: Control
+var _notice_title: Label
 var _notice_message: Label
 var _skip_review_bar: Control
 var _bg: Control
@@ -67,6 +69,11 @@ var _chrono_chaos_busy: bool = false
 var _chrono_last_urgency_tick: int = -1
 var _lose_overlay: Control
 var _lose_title: Label
+var _rubik_cube: Control
+var _rubik_play_host: Control
+var _rubik_face_index: int = -1
+var _pairs_caption_label: Label
+var _face_started_msec: int = 0
 
 
 func _ready() -> void:
@@ -183,8 +190,10 @@ func _build_ui() -> void:
 		_timer_banner.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		stats.add_child(_timer_banner)
 	else:
-		var pairs_stat := _make_stat_item("pairs", "PAREJAS", STAT_PAIRS_COLOR)
+		var pairs_caption := "CARAS" if _is_rubik_mode() else "PAREJAS"
+		var pairs_stat := _make_stat_item("pairs", pairs_caption, STAT_PAIRS_COLOR)
 		_pairs_label = pairs_stat.get_meta("value_label")
+		_pairs_caption_label = pairs_stat.get_meta("caption_label")
 		_pairs_label.text = "0/0"
 		stats.add_child(pairs_stat)
 	stats.add_child(_make_stat_divider())
@@ -205,7 +214,24 @@ func _build_ui() -> void:
 	_board.level_completed.connect(_on_level_completed)
 	_board.invalid_move.connect(_on_invalid_move)
 
-	vbox.add_child(_board)
+	if _is_rubik_mode():
+		_rubik_play_host = Control.new()
+		_rubik_play_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_rubik_play_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_rubik_play_host.custom_minimum_size = Vector2(200, 200)
+		vbox.add_child(_rubik_play_host)
+
+		_board.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_rubik_play_host.add_child(_board)
+
+		_rubik_cube = RubikCubeViewScript.new()
+		_rubik_cube.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		_rubik_cube.face_selected.connect(_on_rubik_face_selected)
+		_rubik_cube.face_already_done.connect(_on_rubik_face_already_done)
+		_rubik_play_host.add_child(_rubik_cube)
+		_show_rubik_cube_view()
+	else:
+		vbox.add_child(_board)
 
 	_actions_box = HBoxContainer.new()
 	_actions_box.add_theme_constant_override("separation", 10)
@@ -358,7 +384,10 @@ func _load_level_async() -> void:
 	if _should_play_emoji_era_intro(_level_id) and not _era_transition_playing:
 		await _play_emoji_era_transition(false)
 
-	_show_loading("Generando nivel %d…" % _level_id)
+	if _is_rubik_mode():
+		_show_loading("Generando cubo %d (6 caras)…" % _level_id)
+	else:
+		_show_loading("Generando nivel %d…" % _level_id)
 
 	# Deja pintar el spinner; la generación corre en segundo plano.
 	await get_tree().process_frame
@@ -381,7 +410,19 @@ func _load_level_async() -> void:
 	_refresh_score_label()
 	_apply_background_for_level(_level_id)
 	_board.modulate = Color(1, 1, 1, 1)
-	_board.setup_level(_current_level)
+	if _is_rubik_mode():
+		# Cubo ya terminado (p. ej. desde selector): permitir rejugar limpiando caras.
+		if (
+			SaveManager.is_rubik_cube_complete(_level_id)
+			and SaveManager.is_level_completed(_level_id)
+		):
+			SaveManager.clear_rubik_faces(_level_id)
+		_rubik_face_index = -1
+		_show_rubik_cube_view()
+		_setup_rubik_cube_view()
+		_refresh_rubik_faces_stat()
+	else:
+		_board.setup_level(_current_level)
 	_overlay.visible = false
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	for child in _overlay.get_children():
@@ -399,8 +440,85 @@ func _load_level_async() -> void:
 		_content_root.modulate = Color(1, 1, 1, 1)
 
 
+func _is_rubik_mode() -> bool:
+	return LevelManager.current_mode == LevelManager.MODE_RUBIK
+
+
+func _show_rubik_cube_view() -> void:
+	_rubik_face_index = -1
+	if _board != null:
+		_board.visible = false
+		_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _rubik_cube != null:
+		_rubik_cube.visible = true
+		_rubik_cube.mouse_filter = Control.MOUSE_FILTER_STOP
+	if _actions_box != null:
+		_actions_box.visible = false
+	if _pairs_caption_label != null:
+		_pairs_caption_label.text = "CARAS"
+	_refresh_rubik_faces_stat()
+
+
+func _setup_rubik_cube_view() -> void:
+	if _rubik_cube == null or not _rubik_cube.has_method("setup"):
+		return
+	var faces: Array = []
+	if typeof(_current_level.get("faces", null)) == TYPE_ARRAY:
+		faces = _current_level["faces"]
+	_rubik_cube.setup(SaveManager.get_rubik_face_mask(_level_id), faces)
+
+
+func _show_rubik_face_board(face_index: int) -> void:
+	var faces: Array = _current_level.get("faces", [])
+	if face_index < 0 or face_index >= faces.size():
+		return
+	if typeof(faces[face_index]) != TYPE_DICTIONARY:
+		return
+	_rubik_face_index = face_index
+	var face: Dictionary = faces[face_index]
+	_board.setup_level(face)
+	_board.visible = true
+	_board.mouse_filter = Control.MOUSE_FILTER_STOP
+	if _rubik_cube != null:
+		_rubik_cube.visible = false
+		_rubik_cube.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _actions_box != null:
+		_actions_box.visible = true
+	if _pairs_caption_label != null:
+		_pairs_caption_label.text = "PAREJAS"
+	_face_started_msec = Time.get_ticks_msec()
+	_refresh_hint_button()
+
+
+func _refresh_rubik_faces_stat() -> void:
+	if _pairs_label == null or not _is_rubik_mode():
+		return
+	if _rubik_face_index < 0:
+		var done := SaveManager.rubik_faces_done_count(_level_id)
+		_pairs_label.text = "%d/%d" % [done, LevelManager.RUBIK_FACE_COUNT]
+	# En cara activa, _on_pairs_changed actualiza el valor.
+
+
+func _on_rubik_face_selected(face_index: int) -> void:
+	if _is_loading_level or _is_resolving or _era_transition_playing:
+		return
+	if SaveManager.is_rubik_face_done(_level_id, face_index):
+		_on_rubik_face_already_done(face_index)
+		return
+	AudioManager.play(AudioManager.Sfx.SELECT)
+	_show_rubik_face_board(face_index)
+
+
+func _on_rubik_face_already_done(_face_index: int) -> void:
+	AudioManager.play(AudioManager.Sfx.INVALID)
+	_show_notice_overlay("Elige otra cara del cubo para continuar.", "Cara Completada")
+
+
 func _on_pairs_changed(remaining: int, total: int) -> void:
 	if _pairs_label == null:
+		return
+	if _is_rubik_mode() and _rubik_face_index < 0:
+		_refresh_rubik_faces_stat()
 		return
 	_pairs_label.text = "%d/%d" % [total - remaining, total]
 
@@ -835,6 +953,7 @@ func _make_stat_item(kind: String, caption: String, value_color: Color) -> HBoxC
 	value_row.add_child(spark)
 
 	box.set_meta("value_label", value)
+	box.set_meta("caption_label", caption_label)
 	return box
 
 
@@ -1113,9 +1232,9 @@ func _build_notice_overlay() -> void:
 	box.custom_minimum_size = Vector2(360, 0)
 	panel.add_child(box)
 
-	var title := UIFactory.make_neon_title("Pistas insuficientes", 34)
-	title.add_theme_color_override("font_color", GamePalette.MENU_YELLOW)
-	box.add_child(title)
+	_notice_title = UIFactory.make_neon_title("Pistas insuficientes", 34)
+	_notice_title.add_theme_color_override("font_color", GamePalette.MENU_YELLOW)
+	box.add_child(_notice_title)
 
 	_notice_message = UIFactory.make_light_subtitle("", 26)
 	_notice_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1130,9 +1249,11 @@ func _build_notice_overlay() -> void:
 	box.add_child(ok_btn)
 
 
-func _show_notice_overlay(message: String) -> void:
+func _show_notice_overlay(message: String, title: String = "Pistas insuficientes") -> void:
 	if _notice_overlay == null or _notice_message == null:
 		return
+	if _notice_title != null:
+		_notice_title.text = title
 	_notice_message.text = message
 	_notice_overlay.visible = true
 	_notice_overlay.modulate = Color(1, 1, 1, 0)
@@ -1173,6 +1294,12 @@ func _on_solution_revealed_for_skip() -> void:
 
 
 func _on_menu() -> void:
+	# Rubik en una cara: volver al cubo (sin perder progreso de otras caras).
+	if _is_rubik_mode() and _rubik_face_index >= 0:
+		AudioManager.play(AudioManager.Sfx.SELECT)
+		_show_rubik_cube_view()
+		_setup_rubik_cube_view()
+		return
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
 
 
@@ -1197,6 +1324,9 @@ func _refresh_sound_button(_arg: Variant = null) -> void:
 func _on_level_completed(moves: int) -> void:
 	if _is_resolving:
 		return
+	if _is_rubik_mode():
+		await _on_rubik_face_completed(moves)
+		return
 	var stars := LevelManager.calculate_stars(_current_level, moves)
 	var elapsed_sec := 0.0
 	if _level_started_msec > 0:
@@ -1216,6 +1346,7 @@ func _on_level_completed(moves: int) -> void:
 	# Completar el 99: cinemática de era siempre (sin overlay de victoria).
 	if (
 		LevelManager.current_mode != LevelManager.MODE_SANDBOX
+		and LevelManager.current_mode != LevelManager.MODE_RUBIK
 		and _level_id == BoardTheme.EMOJI_START - 1
 	):
 		await _play_emoji_era_transition(true)
@@ -1229,6 +1360,40 @@ func _on_level_completed(moves: int) -> void:
 		_era_next_preloaded = false
 		return
 
+	_show_complete_overlay(moves, stars, hint_reward, reward)
+
+
+func _on_rubik_face_completed(moves: int) -> void:
+	var face_i := _rubik_face_index
+	if face_i < 0:
+		return
+	SaveManager.mark_rubik_face_done(_level_id, face_i)
+	AudioManager.play(AudioManager.Sfx.SELECT)
+	_show_rubik_cube_view()
+	_setup_rubik_cube_view()
+	if _rubik_cube != null and _rubik_cube.has_method("celebrate_face"):
+		_rubik_cube.celebrate_face(face_i)
+	_refresh_rubik_faces_stat()
+
+	if not SaveManager.is_rubik_cube_complete(_level_id):
+		return
+
+	# Cubo completo: registrar nivel y victoria.
+	var stars := LevelManager.calculate_stars(_current_level, moves)
+	var elapsed_sec := 0.0
+	if _level_started_msec > 0:
+		elapsed_sec = float(Time.get_ticks_msec() - _level_started_msec) / 1000.0
+	var reward: Dictionary = SaveManager.register_level_complete(
+		_level_id,
+		moves,
+		stars,
+		"",
+		elapsed_sec,
+		_current_level
+	)
+	var hint_reward := int(reward.get("hint_reward", 0))
+	_refresh_hint_button()
+	_refresh_score_label()
 	_show_complete_overlay(moves, stars, hint_reward, reward)
 
 
@@ -1354,7 +1519,10 @@ func _crosses_into_emoji_era(from_id: int, to_id: int) -> bool:
 
 
 func _should_play_emoji_era_intro(level_id: int) -> bool:
-	if LevelManager.current_mode == LevelManager.MODE_SANDBOX:
+	if (
+		LevelManager.current_mode == LevelManager.MODE_SANDBOX
+		or LevelManager.current_mode == LevelManager.MODE_RUBIK
+	):
 		return false
 	return level_id >= BoardTheme.EMOJI_START and not SaveManager.emoji_era_intro_done
 
@@ -1429,6 +1597,16 @@ func _apply_background_for_level(level_id: int) -> void:
 			and is_instance_valid(_bg)
 			and str(_bg.get("photo_path")) == "res://assets/backgrounds/crazy.jpg"
 		):
+			return
+		if is_instance_valid(_bg):
+			_bg.queue_free()
+			_bg = null
+		_bg = UIFactory.attach_level_background(self, level_id)
+		return
+
+	# Rubik: cubitos flotantes (fondo propio).
+	if LevelManager.current_mode == LevelManager.MODE_RUBIK:
+		if _bg != null and is_instance_valid(_bg) and _bg.has_method("is_rubik_background"):
 			return
 		if is_instance_valid(_bg):
 			_bg.queue_free()
@@ -1533,4 +1711,11 @@ func _on_victory_retry() -> void:
 		child.queue_free()
 	_refresh_hint_button()
 	_level_started_msec = Time.get_ticks_msec()
+	if _is_rubik_mode():
+		SaveManager.clear_rubik_faces(_level_id)
+		_rubik_face_index = -1
+		_show_rubik_cube_view()
+		_setup_rubik_cube_view()
+		_refresh_rubik_faces_stat()
+		return
 	_board.reset_level()

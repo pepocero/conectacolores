@@ -8,6 +8,7 @@ const GlossySkin := preload("res://scripts/glossy_button_skin.gd")
 const MenuBackground := preload("res://scripts/main_menu_background.gd")
 const SpaceBackground := preload("res://scripts/space_background.gd")
 const CrazyBackground := preload("res://scripts/backgrounds/bg_crazy.gd")
+const RubikBackground := preload("res://scripts/backgrounds/bg_rubik.gd")
 const MODO_CRAZY_LOGO := preload("res://assets/ui/modo_crazy_logo.png")
 const SKIN_NODE_NAME := "GlossySkin"
 const BUTTON_STATES: Array[String] = ["normal", "hover", "pressed", "hover_pressed", "focus", "disabled"]
@@ -290,6 +291,16 @@ static func apply_hardcore_background(bg: Control) -> void:
 		bg.call("set_palette_band", HARDCORE_PALETTE_BAND)
 
 
+static func attach_rubik_background(parent: Control) -> Control:
+	var decor := RubikBackground.new()
+	decor.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	decor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	decor.add_to_group("level_bg_fx")
+	parent.add_child(decor)
+	parent.move_child(decor, 0)
+	return decor
+
+
 static func attach_crazy_background(parent: Control) -> Control:
 	var decor := CrazyBackground.new()
 	decor.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -325,6 +336,8 @@ static func attach_level_background(parent: Control, level_id: int) -> Control:
 		parent.add_child(sand)
 		parent.move_child(sand, 0)
 		return sand
+	if LevelManager != null and LevelManager.current_mode == LevelManager.MODE_RUBIK:
+		return attach_rubik_background(parent)
 	if LevelManager != null and LevelManager.current_mode == LevelManager.MODE_HARDCORE:
 		if BoardTheme.uses_emoji(level_id) or BoardTheme.kind_for_level(level_id) == BoardTheme.Kind.CONTRAST:
 			return attach_space_background(parent, level_id)
