@@ -1,0 +1,44 @@
+---
+description: Punto bueno de la animación de rotura del tablero (restaurar si el usuario lo pide)
+alwaysApply: true
+---
+
+# Rotura del tablero — baseline aprobado
+
+**Todo perfecto (confirmado).** Si el usuario pide volver a cómo funcionaba la rotura / boom (o “como estaba bien”), restaurar este punto.
+
+La rotura solo se reproduce si **Efectos visuales** y **Explotar tablero** están activos (`SettingsManager.board_destroy_enabled`, default **off**). El boom cartoon de bolas es independiente (`ball_boom_enabled`, default **off**); si está off se usan burbujas.
+
+## [`scripts/board_destroy_fx.gd`](scripts/board_destroy_fx.gd)
+
+- `DEFAULT_DURATION` = **3.75**
+- `HOLD_BEFORE_FALL_SEC` = **0.0** (+ 1 `process_frame`)
+- `DEFAULT_END_FALL` = **1.0**
+- `DEFAULT_END_ROTATION` = **3.40**
+- `DEFAULT_END_SCATTER` = **1.27**
+- `DEFAULT_END_FADE` = **1.0**
+- `DEFAULT_FADE_DELAY` = **0.0**
+- `DEFAULT_MESH_SCALE` = **1.60**
+- `DEFAULT_GRAVITY` = **4.0**
+- `DEFAULT_GROUND` = **1.0**
+- `DEFAULT_STACK` = **0.03**
+- `DEFAULT_SLIDE` = **0.20**
+- `DEFAULT_PIECES` = **35** (escritorio / shader completo)
+- `MOBILE_PIECES` = **25** (Android/iOS vía `pieces_for_device()`)
+- `MOBILE_DRAW_SCALE` = **0.5** (`size` ×0.5 + `scale` ×2; fill-rate)
+- Shader móvil: [`shaders/board_destroy_lite.gdshader`](shaders/board_destroy_lite.gdshader) (bucles 63/px; fallback al completo)
+
+## Encadenado ([`scripts/board.gd`](scripts/board.gd))
+
+- Con FX on + `ball_boom_enabled`: boom cartoon completo (`LEVEL_COMPLETE_EXPLOSION_SEC` = **3.0**; sin handoff)
+- Con FX on + boom off: inflado + burbujas de color
+- Luego, si `board_destroy_enabled`: rotura (`BOARD_DESTROY_SEC` = **3.75**)
+- Trozos: `BoardDestroyFx.pieces_for_device()` (35 escritorio / 25 móvil)
+- Boom cartoon: diámetro ×**0.95** de la casilla; en móvil máximo **4** explosiones
+- Durante destroy: no `queue_redraw()` del board (`_board_destroy_active`)
+
+## Textura de rotura (`_build_empty_board_texture`)
+
+- Con ajuste «Tablero con colores» activo: casillas ≠ bola (seed por nivel); tint alpha **0.62** sobre `cell_col`, opaco vía `_img_paint_opaque`
+- Con ajuste off: todas las casillas = `cell_col` del tema (mismo color que el tablero; sin tint de bola/paleta)
+- No cambia shaders / pieces / física del FX

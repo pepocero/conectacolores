@@ -1,0 +1,15 @@
+---
+description: Efectos visuales — buscar en godotshaders.com, licencia e integración local
+globs: "**/*.{gd,gdshader,tscn,tres}"
+alwaysApply: false
+---
+
+# Shaders (Godot Shaders)
+
+- Guía del proyecto: `docs/godot-shaders.md`.
+- Fuente comunitaria: https://godotshaders.com/
+- Ante un efecto visual no trivial: buscar primero un shader Godot 4.x adecuado en esa web.
+- Antes de copiar código: revisar **licencia y autor**; guardar `.gdshader` en `shaders/` o `assets/shaders/` con comentario de origen.
+- Preferir `canvas_item` para 2D/UI de este juego.
+- No inventar shaders complejos si hay uno reutilizable; no sustituir Tweens de UI por shaders sin necesidad.
+- Doc oficial de shaders: https://docs.godotengine.org/en/latest/tutorials/shaders/index.html

@@ -1,0 +1,15 @@
+---
+description: Animaciones Godot 4.7 — Tween primero, doc oficial y guía del repo
+globs: "**/*.{gd,tscn,tres}"
+alwaysApply: false
+---
+
+# Animaciones (Godot 4.7)
+
+- Motor: **Godot 4.7**. Guía del proyecto: `docs/godot-animations.md`.
+- Doc oficial: https://docs.godotengine.org/en/latest/tutorials/animation/index.html
+- En este repo priorizar **`create_tween()` / Tween** para UI y feedback corto (como el código existente).
+- Usar `AnimationPlayer` solo para secuencias con varias pistas o difíciles de mantener con Tween.
+- No reescribir animaciones que ya funcionan salvo petición explícita.
+- MP4 de referencia = guía visual; reconstruir en nodos/Tween, no tratar el vídeo como animación editable por defecto.
+- Respetar `SettingsManager.fx_enabled` en efectos costosos.

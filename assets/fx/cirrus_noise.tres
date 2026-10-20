@@ -1,0 +1,16 @@
+[gd_resource type="NoiseTexture2D" load_steps=2 format=3]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_cirrus"]
+noise_type = 0
+seed = 91
+frequency = 0.045
+fractal_type = 1
+fractal_octaves = 3
+fractal_lacunarity = 2.2
+fractal_gain = 0.4
+
+[resource]
+width = 256
+height = 256
+seamless = true
+noise = SubResource("FastNoiseLite_cirrus")

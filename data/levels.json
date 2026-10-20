@@ -1,0 +1,5 @@
+{
+	"note": "Los niveles se generan proceduralmente en runtime (LevelGenerator). Este archivo ya no es la fuente de verdad.",
+	"easy": [],
+	"hard": []
+}

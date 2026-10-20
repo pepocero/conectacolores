@@ -1,0 +1,20 @@
+---
+description: Toda pantalla de prueba de animación/FX debe tener botón en Ajustes
+alwaysApply: true
+---
+
+# Pantallas de prueba → Ajustes
+
+Cuando el usuario pida crear una **pantalla de prueba** (preview de animación, shader, FX, overlay, etc.):
+
+1. Crear la escena/script de preview como siempre (p. ej. `scenes/xxx_preview.tscn`).
+2. **Obligatorio:** añadir en [`scripts/settings.gd`](scripts/settings.gd) un botón con el texto:
+
+   `Probar animación <nombre corto>`
+
+   Ejemplo: `Probar animación rotura tablero`.
+
+3. El botón debe abrir esa escena (`change_scene_to_file`).
+4. El botón «Menú» / volver de la preview debe regresar a `res://scenes/settings.tscn` (no al menú principal), para poder iterar rápido.
+
+No hace falta que el usuario lo pida otra vez: si pide la pantalla de prueba, el botón en Ajustes forma parte del mismo trabajo.

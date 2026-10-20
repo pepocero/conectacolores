@@ -1,0 +1,12 @@
+Comic Neue
+Copyright (c) 2014, Craig Rozynski and others
+Licensed under the SIL Open Font License, Version 1.1
+https://scripts.sil.org/OFL
+
+Comic Neue is a free alternative inspired by the look of Comic Sans.
+
+Titan One
+Copyright (c) 2011, Rodrigo Fuenzalida
+Licensed under the SIL Open Font License, Version 1.1
+See TitanOne-OFL.txt
+https://fonts.google.com/specimen/Titan+One
