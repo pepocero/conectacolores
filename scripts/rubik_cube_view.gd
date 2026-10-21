@@ -17,7 +17,8 @@ const FACE_COLORS: Array[Color] = [
 const DONE_TINT := Color("2ECC71")
 const CUBE_HALF := 0.52
 const FACE_SIZE := CUBE_HALF * 1.86
-const DRAG_SENS := 0.012
+const DRAG_SENS := 0.004
+const DRAG_SMOOTH := 0.55
 const TAP_SLOP_PX := 14.0
 const PREVIEW_PX := 160
 
@@ -393,11 +394,12 @@ func _begin_drag(pos: Vector2) -> void:
 func _apply_drag_delta(rel: Vector2) -> void:
 	if not _dragging:
 		return
-	if rel.length() > TAP_SLOP_PX * 0.35:
+	var smooth_rel := rel.lerp(Vector2.ZERO, 1.0 - DRAG_SMOOTH)
+	if smooth_rel.length() > TAP_SLOP_PX * 0.35:
 		_drag_moved = true
-	_yaw += rel.x * DRAG_SENS
+	_yaw += smooth_rel.x * DRAG_SENS
 	# Vertical libre (sin tope), misma dirección que el dedo.
-	_pitch += rel.y * DRAG_SENS
+	_pitch += smooth_rel.y * DRAG_SENS
 	_apply_rotation()
 
 

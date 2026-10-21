@@ -34,7 +34,7 @@ La rotura solo se reproduce si **Efectos visuales** y **Explotar tablero** está
 - Con FX on + boom off: inflado + burbujas de color
 - Luego, si `board_destroy_enabled`: rotura (`BOARD_DESTROY_SEC` = **3.75**)
 - Trozos: `BoardDestroyFx.pieces_for_device()` (35 escritorio / 25 móvil)
-- Boom cartoon: diámetro ×**0.95** de la casilla; en móvil máximo **4** explosiones
+- Boom cartoon: diámetro ×**0.95** de la casilla; **todas** las bolas explotan; calidad/`draw_scale` (y lite) según carga y `FxQuality`
 - Durante destroy: no `queue_redraw()` del board (`_board_destroy_active`)
 
 ## Textura de rotura (`_build_empty_board_texture`)

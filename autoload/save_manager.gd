@@ -24,6 +24,9 @@ var colored_board_enabled: bool = false
 var board_destroy_enabled: bool = false
 ## Boom cartoon de bolas al completar (off → burbujas).
 var ball_boom_enabled: bool = false
+## Perfil FX auto (low/mid/high) y si ya se calibró por FPS.
+var fx_quality_profile: String = "high"
+var fx_quality_calibrated: bool = false
 ## Intro cinemática al entrar en la era Emoji (nivel 101+).
 var emoji_era_intro_done: bool = false
 var difficulty_bonus_easy: int = 0
@@ -80,6 +83,8 @@ func build_save_dictionary() -> Dictionary:
 		"colored_board_enabled": colored_board_enabled,
 		"board_destroy_enabled": board_destroy_enabled,
 		"ball_boom_enabled": ball_boom_enabled,
+		"fx_quality_profile": fx_quality_profile,
+		"fx_quality_calibrated": fx_quality_calibrated,
 		"emoji_era_intro_done": emoji_era_intro_done,
 		"difficulty_bonus_easy": difficulty_bonus_easy,
 		"difficulty_bonus_hard": difficulty_bonus_hard,
@@ -151,6 +156,14 @@ func _apply_parsed_save_data(data: Dictionary) -> bool:
 	colored_board_enabled = bool(data.get("colored_board_enabled", false))
 	board_destroy_enabled = bool(data.get("board_destroy_enabled", false))
 	ball_boom_enabled = bool(data.get("ball_boom_enabled", false))
+	fx_quality_profile = str(data.get("fx_quality_profile", "high"))
+	if (
+		fx_quality_profile != "low"
+		and fx_quality_profile != "mid"
+		and fx_quality_profile != "high"
+	):
+		fx_quality_profile = "high"
+	fx_quality_calibrated = bool(data.get("fx_quality_calibrated", false))
 	emoji_era_intro_done = bool(data.get("emoji_era_intro_done", false))
 	# v2 y anteriores: pistas/score globales → se copian a cada modo sin ellos.
 	var legacy_hints := maxi(0, int(data.get("hints_remaining", STARTING_HINTS)))
@@ -235,6 +248,8 @@ func _apply_defaults() -> void:
 	colored_board_enabled = false
 	board_destroy_enabled = false
 	ball_boom_enabled = false
+	fx_quality_profile = "high"
+	fx_quality_calibrated = false
 	emoji_era_intro_done = false
 	difficulty_bonus_easy = 0
 	difficulty_bonus_hard = 0
@@ -390,7 +405,11 @@ func register_level_complete(
 
 	var unlocked := int(data.get("last_unlocked_level", 1))
 	if level_id >= unlocked:
-		data["last_unlocked_level"] = level_id + 1
+		var next_unlock := level_id + 1
+		# Difícil: no abrir cola infinita; tope campaña 200.
+		if key_mode == "hard":
+			next_unlock = mini(next_unlock, LevelManager.CAMPAIGN_END)
+		data["last_unlocked_level"] = next_unlock
 
 	var hint_reward := 0
 	var first_perfect := false
@@ -475,16 +494,22 @@ func redeem_hints_to_skip(level_id: int, mode_id: String = "") -> Dictionary:
 
 	var unlocked := int(data.get("last_unlocked_level", 1))
 	if level_id >= unlocked:
-		data["last_unlocked_level"] = level_id + 1
+		var next_unlock := level_id + 1
+		if key_mode == "hard":
+			next_unlock = mini(next_unlock, LevelManager.CAMPAIGN_END)
+		data["last_unlocked_level"] = next_unlock
 
 	modes_progress[key_mode] = data
 	last_mode = key_mode
 	save_data()
+	var next_id := level_id + 1
+	if key_mode == "hard" and level_id >= LevelManager.CAMPAIGN_END:
+		next_id = 0
 	return {
 		"ok": true,
 		"spent": spent,
 		"skip_density_steps": int(data.get("skip_density_steps", 0)),
-		"next_level_id": level_id + 1,
+		"next_level_id": next_id,
 	}
 
 
@@ -545,6 +570,15 @@ func set_board_destroy_enabled(enabled: bool) -> void:
 
 func set_ball_boom_enabled(enabled: bool) -> void:
 	ball_boom_enabled = enabled
+	save_data()
+
+
+func set_fx_quality_profile(profile: String, is_calibrated: bool) -> void:
+	var p := profile
+	if p != "low" and p != "mid" and p != "high":
+		p = "high"
+	fx_quality_profile = p
+	fx_quality_calibrated = is_calibrated
 	save_data()
 
 

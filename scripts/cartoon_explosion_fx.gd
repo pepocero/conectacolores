@@ -32,18 +32,22 @@ func _init() -> void:
 	visible = false
 
 
-## draw_scale_override > 0: fuerza undersample (p. ej. cinemática era en móvil).
+## draw_scale_override > 0: fuerza undersample (p. ej. cinemática era / muchas bolas).
+## force_lite_override: -1 = auto (FxQuality/móvil), 0 = completo, 1 = lite.
 func setup_at(
 	center: Vector2,
 	diameter: float,
 	tint: Color = Color.WHITE,
-	draw_scale_override: float = -1.0
+	draw_scale_override: float = -1.0,
+	force_lite_override: int = -1
 ) -> void:
 	var visual_side := maxf(diameter, 20.0)
 	var mobile := BoardDestroyFxScript.is_mobile_device()
 	var draw_scale := 1.0
 	if draw_scale_override > 0.0:
 		draw_scale = clampf(draw_scale_override, 0.2, 1.0)
+	elif FxQuality != null:
+		draw_scale = FxQuality.destroy_draw_scale()
 	elif mobile:
 		draw_scale = MOBILE_DRAW_SCALE
 	var side := visual_side * draw_scale
@@ -54,7 +58,14 @@ func setup_at(
 	position = center - Vector2(visual_side, visual_side) * 0.5
 	color = Color(1, 1, 1, 1)
 	modulate = Color(1, 1, 1, 1)
-	if mobile and SHADER_LITE != null:
+	var use_lite := false
+	if force_lite_override >= 0:
+		use_lite = force_lite_override > 0
+	elif FxQuality != null:
+		use_lite = FxQuality.use_lite_shader()
+	else:
+		use_lite = mobile
+	if use_lite and SHADER_LITE != null:
 		_mat.shader = SHADER_LITE
 	else:
 		_mat.shader = SHADER

@@ -55,6 +55,8 @@ func set_vibration(enabled: bool) -> void:
 func set_fx(enabled: bool) -> void:
 	fx_enabled = enabled
 	SaveManager.set_fx_enabled(enabled)
+	if FxQuality != null:
+		FxQuality.request_recalibrate()
 	settings_changed.emit()
 
 

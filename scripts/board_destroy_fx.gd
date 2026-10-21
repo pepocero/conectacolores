@@ -44,14 +44,28 @@ static func is_mobile_device() -> bool:
 
 
 static func pieces_for_device() -> float:
+	if FxQuality != null:
+		return FxQuality.destroy_pieces()
 	return MOBILE_PIECES if is_mobile_device() else DEFAULT_PIECES
+
+
+static func _use_lite_shader() -> bool:
+	if FxQuality != null:
+		return FxQuality.use_lite_shader()
+	return is_mobile_device()
+
+
+static func _default_draw_scale() -> float:
+	if FxQuality != null:
+		return FxQuality.destroy_draw_scale()
+	return MOBILE_DRAW_SCALE if is_mobile_device() else 1.0
 
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	stretch_mode = TextureRect.STRETCH_SCALE
-	_use_mobile_profile = is_mobile_device()
+	_use_mobile_profile = _use_lite_shader()
 	_mat = ShaderMaterial.new()
 	if _use_mobile_profile:
 		_mat.shader = SHADER_LITE if SHADER_LITE != null else SHADER
@@ -72,7 +86,7 @@ func setup(
 	draw_scale_override: float = -1.0
 ) -> void:
 	texture = tex
-	_use_mobile_profile = is_mobile_device()
+	_use_mobile_profile = _use_lite_shader()
 	if _use_mobile_profile:
 		_mat.shader = SHADER_LITE if SHADER_LITE != null else SHADER
 	else:
@@ -85,8 +99,8 @@ func setup(
 	var draw_scale := 1.0
 	if draw_scale_override > 0.0:
 		draw_scale = clampf(draw_scale_override, 0.2, 1.0)
-	elif _use_mobile_profile:
-		draw_scale = MOBILE_DRAW_SCALE
+	else:
+		draw_scale = _default_draw_scale()
 	var local_size := board_rect.size * draw_scale
 	scale = Vector2(1.0 / draw_scale, 1.0 / draw_scale) if draw_scale < 0.999 else Vector2.ONE
 	# Con scale>1 el origin del control es la esquina; position = global top-left del tablero.
@@ -120,15 +134,18 @@ func play(duration_sec: float = DEFAULT_DURATION) -> void:
 	var dur := maxf(0.5, duration_sec)
 	var fade_delay_ratio := clampf(DEFAULT_FADE_DELAY, 0.0, 0.9)
 	var fade_dur := maxf(0.15, dur * (1.0 - fade_delay_ratio))
-	var log_fps := _use_mobile_profile or force_mobile_profile
+	var measure := FxQuality != null and not FxQuality.calibrated
+	if measure:
+		FxQuality.begin_measure()
+	var log_fps := measure or _use_mobile_profile or force_mobile_profile
 	var fps_acc := 0.0
 	var fps_samples := 0
 	var fps_tick := 0.0
 	if log_fps:
 		print(
-			"[BoardDestroyFx] mobile_profile=%s pieces=%.0f size=%s scale=%s shader_lite=%s"
+			"[BoardDestroyFx] profile=%s pieces=%.0f size=%s scale=%s shader_lite=%s"
 			% [
-				str(_use_mobile_profile),
+				FxQuality.profile if FxQuality != null else "?",
 				pieces_for_device(),
 				str(size),
 				str(scale),
@@ -149,10 +166,14 @@ func play(duration_sec: float = DEFAULT_DURATION) -> void:
 				var fps := Engine.get_frames_per_second()
 				fps_acc += fps
 				fps_samples += 1
+				if FxQuality != null:
+					FxQuality.sample_fps(fps)
 				print("[BoardDestroyFx] fps=%.1f" % fps)
 				fps_tick = 0.0
 		if fps_samples > 0:
 			print("[BoardDestroyFx] fps_avg=%.1f" % (fps_acc / float(fps_samples)))
+		if measure and FxQuality != null:
+			FxQuality.end_measure()
 	else:
 		await tw.finished
 	if is_instance_valid(self):

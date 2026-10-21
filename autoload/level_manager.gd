@@ -11,7 +11,7 @@ const SANDBOX_CACHE_REV := 13
 ## Subir al cambiar la curva base de Hardcore (no invalida fácil/difícil).
 const HARDCORE_CACHE_REV := 2
 ## Subir al endurecer curva/picking de Difícil (invalida caché hard).
-const HARD_CACHE_REV := 1
+const HARD_CACHE_REV := 2
 ## Subir al cambiar curva/picking de Modo Crazy (invalida caché chrono).
 const CHRONO_CACHE_REV := 2
 ## Subir al cambiar pack/caras de Modo Rubik (invalida caché rubik).
@@ -99,7 +99,14 @@ func get_levels_for_select(mode_id: String = "") -> Array:
 	var unlocked := SaveManager.get_last_unlocked_level(key)
 	var ids: Array[int] = []
 
-	if unlocked < INFINITE_START:
+	# Difícil: campaña finita (sin cola infinita 201+).
+	if key == MODE_HARD:
+		unlocked = mini(unlocked, CAMPAIGN_END)
+		var max_hard := mini(CAMPAIGN_END, unlocked + LEVEL_SELECT_MARGIN)
+		max_hard = maxi(max_hard, mini(unlocked, CAMPAIGN_END))
+		for i in range(1, max_hard + 1):
+			ids.append(i)
+	elif unlocked < INFINITE_START:
 		var max_id := mini(CAMPAIGN_END, unlocked + LEVEL_SELECT_MARGIN)
 		max_id = maxi(max_id, mini(unlocked, CAMPAIGN_END))
 		for i in range(1, max_id + 1):
@@ -285,6 +292,8 @@ func set_current_level(level_id: int) -> void:
 
 
 func get_next_level_id(level_id: int) -> int:
+	if current_mode == MODE_HARD and level_id >= CAMPAIGN_END:
+		return 0
 	return level_id + 1
 
 

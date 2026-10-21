@@ -1287,7 +1287,10 @@ func _spawn_soft_bubble(center_global: Vector2, color: Color, strength: float = 
 	tw.tween_callback(bubble.queue_free)
 
 	if SettingsManager.fx_enabled:
-		for i in range(6):
+		var spark_n := 6
+		if FxQuality != null:
+			spark_n = FxQuality.victory_spark_count()
+		for i in range(spark_n):
 			var spark := ColorRect.new()
 			spark.color = Color(color.r, color.g, color.b, 0.9)
 			spark.size = Vector2(8, 8)
@@ -1295,7 +1298,7 @@ func _spawn_soft_bubble(center_global: Vector2, color: Color, strength: float = 
 			spark.pivot_offset = spark.size * 0.5
 			_fx_layer.add_child(spark)
 			spark.position = local_center - spark.size * 0.5
-			var angle := TAU * float(i) / 6.0 + randf() * 0.2
+			var angle := TAU * float(i) / float(maxi(1, spark_n)) + randf() * 0.2
 			var end_pos := local_center + Vector2(cos(angle), sin(angle)) * randf_range(28.0, 54.0) * strength - spark.size * 0.5
 			var pop := create_tween()
 			pop.tween_property(spark, "position", end_pos, 0.32).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -1596,6 +1599,8 @@ func _spawn_bubble_pop_burst(center_global: Vector2) -> void:
 	ring_tw.tween_callback(ring.queue_free)
 
 	var droplet_count := 10 if SettingsManager.fx_enabled else 6
+	if SettingsManager.fx_enabled and FxQuality != null:
+		droplet_count = FxQuality.victory_droplet_count()
 	for i in range(droplet_count):
 		var drop := Control.new()
 		var drop_size := randf_range(10.0, 18.0)
@@ -1742,7 +1747,10 @@ func _draw_confetti() -> void:
 	rng.seed = _confetti_seed
 	var w := _sunburst.size.x
 	var h := _sunburst.size.y
-	for i in range(28):
+	var count := 28
+	if FxQuality != null:
+		count = FxQuality.victory_confetti_count()
+	for i in range(count):
 		var color: Color = CONFETTI_COLORS[i % CONFETTI_COLORS.size()]
 		var pos := Vector2(rng.randf_range(w * 0.05, w * 0.95), rng.randf_range(h * 0.02, h * 0.42))
 		var piece := Rect2(pos, Vector2(rng.randf_range(8.0, 16.0), rng.randf_range(5.0, 10.0)))

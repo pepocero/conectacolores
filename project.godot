@@ -30,6 +30,7 @@ SaveManager="*res://autoload/save_manager.gd"
 SettingsManager="*res://autoload/settings_manager.gd"
 AudioManager="*res://autoload/audio_manager.gd"
 LevelManager="*res://autoload/level_manager.gd"
+FxQuality="*res://autoload/fx_quality.gd"
 
 [display]
 
