@@ -82,10 +82,8 @@ const EFFORT_LOG_CAP := 8.0
 const MAX_STEP_ABOVE_FLOOR := 6.0
 ## Difícil: más margen para no quedarse en layouts blandos a propósito.
 const MAX_STEP_ABOVE_FLOOR_HARD := 10.0
-## Obstáculos Difícil: desde nivel 10, +1 cada 5; tope absoluto.
-const HARD_OBSTACLE_START_LEVEL := 10
-const HARD_OBSTACLE_ABS_CAP := 12
-const HARD_OBSTACLE_AREA_FRAC := 0.15
+## Distancia Manhattan mínima entre extremos de una misma pareja (Difícil / Numberlink).
+const MIN_PAIR_ENDPOINT_MANHATTAN := 4
 const MAX_SIZE_EASY := 14
 const MAX_SIZE_HARD := 15
 const MAX_SIZE := MAX_SIZE_HARD
@@ -469,17 +467,6 @@ static func compute_metrics(level: Dictionary) -> Dictionary:
 		return result
 
 	var cells := size * size
-	var obstacle_idx: Dictionary = {}
-	var obs_v: Variant = level.get("obstacles", null)
-	if typeof(obs_v) == TYPE_ARRAY:
-		for item: Variant in obs_v:
-			if typeof(item) == TYPE_DICTIONARY:
-				var od: Dictionary = item
-				var ox := int(od.get("x", -1))
-				var oy := int(od.get("y", -1))
-				if ox >= 0 and oy >= 0 and ox < size and oy < size:
-					obstacle_idx[oy * size + ox] = true
-	var playable := maxi(1, cells - obstacle_idx.size())
 	var paths: Array = [] # Array[PackedInt32Array] (índices y * size + x)
 	var owner_of := PackedInt32Array()
 	owner_of.resize(cells)
@@ -515,10 +502,8 @@ static func compute_metrics(level: Dictionary) -> Dictionary:
 		var path: PackedInt32Array = paths[p]
 		var a := path[0]
 		var b := path[path.size() - 1]
-		# 1) Obstáculos + bolas ajenas.
+		# 1) Solo bloquean las bolas ajenas.
 		blocked.fill(0)
-		for oi: Variant in obstacle_idx.keys():
-			blocked[int(oi)] = 1
 		for i in range(cells):
 			if endpoint[i] >= 0 and endpoint[i] != p:
 				blocked[i] = 1
@@ -534,7 +519,7 @@ static func compute_metrics(level: Dictionary) -> Dictionary:
 	var solver = LevelSolverScript.new()
 	var solve: Dictionary = solver.run(level, SOLVER_BUDGET)
 
-	result["cover"] = float(filled) / float(playable)
+	result["cover"] = float(filled) / float(cells)
 	result["detour"] = detour_sum / float(maxi(1, paths.size()))
 	result["interference"] = float(interfering) / float(maxi(1, paths.size()))
 	result["solver_nodes"] = int(solve.get("nodes", 0))
@@ -705,16 +690,30 @@ static func generate(
 	var size := int(params.size)
 	var colors := int(params.colors)
 	var min_cover := float(params.min_cover)
-	var obstacle_count := hard_obstacle_count(level_id, size) if mode_id == "hard" else 0
 	var gen_path := "none"
-	var batch_attempts := 140 if mode_id == "hard" else 100
-	var batch_count := 4 if mode_id == "hard" else 3
+
+	# Difícil: generador propio (serpientes + pick por dureza de resolución).
+	if mode_id == "hard":
+		var hard_level := _generate_hard_weave(
+			level_id, name, size, colors, params, floor_score, other_mode_score
+		)
+		if not hard_level.is_empty() and is_solvable(hard_level):
+			return hard_level
+		# Respaldo: serpiente clásica con manh≥4 (nunca tablero vacío).
+		var backup := _hard_snake_backup(level_id, name, size, colors, params)
+		if not backup.is_empty() and is_solvable(backup):
+			return backup
+		push_error("LevelGenerator: no se pudo generar hard #%d" % level_id)
+		return {}
+
+	var batch_attempts := 100
+	var batch_count := 3
 
 	# 1) Varias tandas de candidatos con la cobertura pedida.
 	var pool: Array[Dictionary] = []
 	for batch in range(batch_count):
 		_collect_candidates(
-			pool, level_id, name, size, colors, min_cover, mode_id, batch * 100, batch_attempts, obstacle_count
+			pool, level_id, name, size, colors, min_cover, mode_id, batch * 100, batch_attempts
 		)
 		var pick := _pick_candidate(pool, mode_id, floor_score, other_mode_score, target)
 		if not pick.is_empty():
@@ -726,7 +725,7 @@ static func generate(
 	# 2) Sin candidato que supere al anterior: cobertura relajada, misma exigencia.
 	var relaxed_cover := maxf(0.45, min_cover - 0.2)
 	_collect_candidates(
-		pool, level_id, name, size, colors, relaxed_cover, mode_id, 10_000, 120, obstacle_count
+		pool, level_id, name, size, colors, relaxed_cover, mode_id, 10_000, 120
 	)
 	var relaxed_pick := _pick_candidate(pool, mode_id, floor_score, other_mode_score, target)
 	if not relaxed_pick.is_empty():
@@ -736,10 +735,9 @@ static func generate(
 		return relaxed_pick
 
 	# 3) Ninguno llega al mínimo: el más difícil de todos los válidos.
-	# Hard/Hardcore: preferir candidatos por encima del modo inferior del mismo nivel.
 	if not pool.is_empty():
 		var hardest := _hardest_candidate(pool)
-		if (mode_id == "hard" or mode_id == "hardcore" or mode_id == "chrono") and other_mode_score >= 0.0:
+		if (mode_id == "hardcore" or mode_id == "chrono") and other_mode_score >= 0.0:
 			var hard_ok := _hardest_above_other(pool, other_mode_score)
 			if not hard_ok.is_empty():
 				hardest = hard_ok
@@ -748,37 +746,18 @@ static func generate(
 		_log_hard_diag(mode_id, level_id, hardest, params, gen_path)
 		return hardest
 
-	# 4) Último recurso: reducir parejas / cover (marcar soft; hard/hardcore evita si puede).
-	# Hard con obstáculos: no bajar parejas antes; reintentar con menos obstáculos.
-	if mode_id == "hard" and obstacle_count > 0:
-		for fewer in range(1, obstacle_count + 1):
-			var reduced_obs := obstacle_count - fewer
-			_collect_candidates(
-				pool, level_id, name, size, colors, relaxed_cover, mode_id, 30_000 + fewer * 100, 80, reduced_obs
-			)
-			var obs_pick := _pick_candidate(pool, mode_id, floor_score, other_mode_score, target)
-			if not obs_pick.is_empty():
-				_stamp_params(obs_pick, params)
-				gen_path = "fewer_obstacles_%d" % reduced_obs
-				_log_hard_diag(mode_id, level_id, obs_pick, params, gen_path)
-				return obs_pick
-
+	# 4) Último recurso: reducir parejas / cover.
 	var soft_best: Dictionary = {}
 	for reduce in range(1, 4):
 		var reduced_colors := maxi(2, colors - reduce)
 		var soft_cover := maxf(0.45, min_cover - 0.25)
 		for attempt in range(40):
 			var seed_value := make_seed(mode_id, level_id, 20_000 + reduce * 100 + attempt)
-			var soft_obs: Array = []
-			if mode_id == "hard" and obstacle_count > 0:
-				var soft_rng := RandomNumberGenerator.new()
-				soft_rng.seed = seed_value
-				soft_obs = _place_hard_obstacles(size, obstacle_count, soft_rng)
-			var level := _try_build(level_id, name, size, reduced_colors, soft_cover, seed_value, soft_obs)
+			var level := _try_build(level_id, name, size, reduced_colors, soft_cover, seed_value, 2)
 			if level.is_empty() or not is_solvable(level):
 				continue
 			_attach_metrics(level)
-			if (mode_id == "hard" or mode_id == "hardcore" or mode_id == "chrono") and other_mode_score >= 0.0:
+			if (mode_id == "hardcore" or mode_id == "chrono") and other_mode_score >= 0.0:
 				if float(level.get("difficulty_score", 0.0)) <= other_mode_score:
 					if soft_best.is_empty() or float(level.get("difficulty_score", 0.0)) > float(
 						soft_best.get("difficulty_score", 0.0)
@@ -801,6 +780,91 @@ static func generate(
 
 	push_error("LevelGenerator: no se pudo generar %s #%d" % [mode_id, level_id])
 	return {}
+
+
+## Modo Difícil: HardLevelGenerator por path.
+static func _generate_hard_weave(
+	level_id: int,
+	name: String,
+	size: int,
+	colors: int,
+	params: Dictionary,
+	floor_score: float,
+	other_mode_score: float
+) -> Dictionary:
+	var script: Script = load("res://scripts/hard_level_generator.gd") as Script
+	if script == null:
+		return {}
+	var seed_value := make_seed("hard", level_id, 0)
+	var raw: Variant = script.call(
+		"generate_level",
+		level_id,
+		name,
+		size,
+		colors,
+		seed_value,
+		other_mode_score,
+		floor_score
+	)
+	if typeof(raw) != TYPE_DICTIONARY:
+		return {}
+	var level: Dictionary = raw
+	if level.is_empty():
+		return {}
+	if not level.has("metrics"):
+		_attach_metrics(level)
+	_stamp_params(level, params)
+	_log_hard_diag("hard", level_id, level, params, str(level.get("generator", "hard_snakes")))
+	return level
+
+
+## Respaldo Difícil si HardLevelGenerator falla: serpiente manh≥4, el más duro.
+static func _hard_snake_backup(
+	level_id: int,
+	name: String,
+	size: int,
+	colors: int,
+	params: Dictionary
+) -> Dictionary:
+	var best: Dictionary = {}
+	var best_score := -INF
+	for reduce in range(0, maxi(1, colors - 1)):
+		var n_colors := maxi(2, colors - reduce)
+		for attempt in range(80):
+			var seed_value := make_seed("hard", level_id, 70_000 + reduce * 200 + attempt)
+			var level := _try_build(
+				level_id, name, size, n_colors, 0.55, seed_value, MIN_PAIR_ENDPOINT_MANHATTAN
+			)
+			if level.is_empty() or not is_solvable(level):
+				continue
+			_attach_metrics(level)
+			var score := float(level.get("difficulty_score", 0.0))
+			var m: Dictionary = level.get("metrics", {})
+			var hardish := score + float(m.get("interference", 0.0)) * 5.0 + float(m.get("detour", 1.0))
+			if hardish > best_score:
+				best_score = hardish
+				best = level
+			if score > 0.0 and float(m.get("interference", 0.0)) >= 0.25:
+				best = level
+				_stamp_params(best, params)
+				best["soft_fallback"] = true
+				_log_hard_diag("hard", level_id, best, params, "snake_backup")
+				return best
+	if best.is_empty():
+		for attempt in range(100):
+			var seed_value := make_seed("hard", level_id, 75_000 + attempt)
+			var level2 := _try_build(level_id, name, size, maxi(2, colors - 2), 0.40, seed_value, 2)
+			if level2.is_empty() or not is_solvable(level2):
+				continue
+			_attach_metrics(level2)
+			best = level2
+			break
+	if best.is_empty():
+		return {}
+	best["soft_fallback"] = true
+	_stamp_params(best, params)
+	_log_hard_diag("hard", level_id, best, params, "snake_backup")
+	return best
 
 
 static func _hardest_above_other(pool: Array[Dictionary], other_score: float) -> Dictionary:
@@ -858,23 +922,16 @@ static func _collect_candidates(
 	min_cover: float,
 	mode_id: String,
 	seed_offset: int,
-	max_attempts: int,
-	obstacle_count: int = 0
+	max_attempts: int
 ) -> void:
 	var built := 0
 	var want := EVAL_CANDIDATES_HARD if mode_id == "hard" else EVAL_CANDIDATES
+	var min_manh := MIN_PAIR_ENDPOINT_MANHATTAN if mode_id == "hard" else 2
 	for attempt in range(max_attempts):
 		if built >= want:
 			return
 		var seed_value := make_seed(mode_id, level_id, seed_offset + attempt)
-		var obstacles: Array = []
-		if obstacle_count > 0:
-			var rng := RandomNumberGenerator.new()
-			rng.seed = seed_value
-			obstacles = _place_hard_obstacles(size, obstacle_count, rng)
-			if obstacles.is_empty() and obstacle_count > 0:
-				continue
-		var level := _try_build(level_id, name, size, colors, min_cover, seed_value, obstacles)
+		var level := _try_build(level_id, name, size, colors, min_cover, seed_value, min_manh)
 		if level.is_empty() or not is_solvable(level):
 			continue
 		_attach_metrics(level)
@@ -952,98 +1009,6 @@ static func _pick_candidate(
 static func _pick_tie_break(level: Dictionary) -> float:
 	var m: Dictionary = level.get("metrics", {})
 	return float(m.get("detour", 0.0)) + float(m.get("interference", 0.0))
-
-
-static func hard_obstacle_count(level_id: int, size: int) -> int:
-	if level_id < HARD_OBSTACLE_START_LEVEL:
-		return 0
-	var raw := 1 + int((level_id - HARD_OBSTACLE_START_LEVEL) / 5)
-	var area_cap := int(floor(float(size * size) * HARD_OBSTACLE_AREA_FRAC))
-	return clampi(raw, 0, mini(area_cap, HARD_OBSTACLE_ABS_CAP))
-
-
-## Coloca obstáculos preferentemente en el centro; exige que el libre quede conexo.
-static func _place_hard_obstacles(size: int, count: int, rng: RandomNumberGenerator) -> Array:
-	if count <= 0 or size < 3:
-		return []
-	var center := Vector2((size - 1) * 0.5, (size - 1) * 0.5)
-	var ranked: Array[Dictionary] = []
-	for y in range(size):
-		for x in range(size):
-			var cell := Vector2i(x, y)
-			var dist_edge := mini(mini(x, y), mini(size - 1 - x, size - 1 - y))
-			var dist_c := Vector2(x, y).distance_to(center)
-			# Preferir centro / cuellos (lejos del borde).
-			var weight := float(dist_edge) * 2.0 - dist_c * 0.15 + rng.randf() * 0.35
-			ranked.append({"cell": cell, "w": weight})
-	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a.w) > float(b.w))
-
-	var chosen: Array[Vector2i] = []
-	for entry: Dictionary in ranked:
-		if chosen.size() >= count:
-			break
-		var cell: Vector2i = entry.cell
-		var too_close := false
-		for other: Vector2i in chosen:
-			if absi(other.x - cell.x) + absi(other.y - cell.y) <= 1:
-				too_close = true
-				break
-		if too_close and chosen.size() + 1 < count:
-			continue
-		chosen.append(cell)
-		if not _free_cells_connected(size, chosen):
-			chosen.pop_back()
-
-	if chosen.size() < count:
-		# Segundo pase sin separación si hace falta.
-		for entry: Dictionary in ranked:
-			if chosen.size() >= count:
-				break
-			var cell2: Vector2i = entry.cell
-			if chosen.has(cell2):
-				continue
-			chosen.append(cell2)
-			if not _free_cells_connected(size, chosen):
-				chosen.pop_back()
-
-	if chosen.size() < count:
-		return []
-	var out: Array = []
-	for c: Vector2i in chosen:
-		out.append({"x": c.x, "y": c.y})
-	return out
-
-
-static func _free_cells_connected(size: int, obstacles: Array[Vector2i]) -> bool:
-	var blocked: Dictionary = {}
-	for c: Vector2i in obstacles:
-		blocked[c] = true
-	var start := Vector2i(-1, -1)
-	var free_total := 0
-	for y in range(size):
-		for x in range(size):
-			var cell := Vector2i(x, y)
-			if blocked.has(cell):
-				continue
-			free_total += 1
-			if start.x < 0:
-				start = cell
-	if free_total <= 0 or start.x < 0:
-		return false
-	var seen: Dictionary = {}
-	var queue: Array[Vector2i] = [start]
-	seen[start] = true
-	var head := 0
-	while head < queue.size():
-		var cur: Vector2i = queue[head]
-		head += 1
-		for d: Vector2i in DIRS:
-			var nb: Vector2i = cur + d
-			if not _in_bounds(nb, size) or blocked.has(nb) or seen.has(nb):
-				continue
-			seen[nb] = true
-			queue.append(nb)
-	return seen.size() == free_total
 
 
 static func _hardest_candidate(pool: Array[Dictionary]) -> Dictionary:
@@ -2108,18 +2073,6 @@ static func is_solvable(level: Dictionary) -> bool:
 		return false
 	var dots_array: Array = dots
 
-	var obstacle_set: Dictionary = {}
-	var obstacles_v: Variant = level.get("obstacles", null)
-	if typeof(obstacles_v) == TYPE_ARRAY:
-		for obs_item: Variant in obstacles_v:
-			if typeof(obs_item) != TYPE_DICTIONARY:
-				continue
-			var obs_d: Dictionary = obs_item
-			var opos := Vector2i(int(obs_d.get("x", -1)), int(obs_d.get("y", -1)))
-			if opos.x < 0 or opos.y < 0 or opos.x >= size or opos.y >= size:
-				return false
-			obstacle_set[opos] = true
-
 	var endpoints: Dictionary = {} # color -> Array[Vector2i]
 	for dot: Variant in dots_array:
 		if typeof(dot) != TYPE_DICTIONARY:
@@ -2128,14 +2081,11 @@ static func is_solvable(level: Dictionary) -> bool:
 		var pos := Vector2i(int(dot.get("x", -1)), int(dot.get("y", -1)))
 		if color.is_empty() or pos.x < 0 or pos.y < 0 or pos.x >= size or pos.y >= size:
 			return false
-		if obstacle_set.has(pos):
-			return false
 		if not endpoints.has(color):
 			endpoints[color] = []
 		endpoints[color].append(pos)
 
 	var occupied: Dictionary = {} # Vector2i -> color
-
 	var par_calc := 0
 
 	for color_name: Variant in solution_dict.keys():
@@ -2156,8 +2106,6 @@ static func is_solvable(level: Dictionary) -> bool:
 				return false
 			var cell := Vector2i(int(arr[0]), int(arr[1]))
 			if cell.x < 0 or cell.y < 0 or cell.x >= size or cell.y >= size:
-				return false
-			if obstacle_set.has(cell):
 				return false
 			if occupied.has(cell):
 				return false
@@ -2458,48 +2406,36 @@ static func _try_build(
 	num_colors: int,
 	min_cover: float,
 	seed_value: int,
-	obstacles: Array = []
+	min_endpoint_manhattan: int = 2
 ) -> Dictionary:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
+	var min_manh := maxi(2, min_endpoint_manhattan)
+	var min_path_len := maxi(3, min_manh + 1)
 
 	var colors: Array[String] = []
 	for i in range(num_colors):
 		colors.append(COLOR_NAMES[i])
 	_shuffle_strings(colors, rng)
 
-	var blocked: Dictionary = {}
-	for obs_v: Variant in obstacles:
-		if typeof(obs_v) == TYPE_DICTIONARY:
-			var od: Dictionary = obs_v
-			blocked[Vector2i(int(od.get("x", 0)), int(od.get("y", 0)))] = true
-		elif typeof(obs_v) == TYPE_VECTOR2I:
-			blocked[obs_v as Vector2i] = true
-
 	var free: Dictionary = {} # Vector2i -> true
 	for y in range(size):
 		for x in range(size):
-			var cell := Vector2i(x, y)
-			if blocked.has(cell):
-				continue
-			free[cell] = true
-
-	var free_start := free.size()
-	if free_start < num_colors * 3:
-		return {}
+			free[Vector2i(x, y)] = true
 
 	var assignment: Dictionary = {} # Vector2i -> color string
 	var paths: Dictionary = {} # color -> Array[Vector2i] ordenado
+	var total := size * size
 
 	for i in range(colors.size()):
 		var color: String = colors[i]
 		var remaining := colors.size() - i
 		var free_count := free.size()
-		var ideal := maxi(3, int(free_count / float(remaining)))
+		var ideal := maxi(min_path_len, int(free_count / float(remaining)))
 		var jitter := rng.randi_range(-1, 2)
 		var reserve := 2 * maxi(0, remaining - 1)
-		var target := maxi(3, mini(free_count - reserve, ideal + jitter))
-		var path := _grow_snake(size, free, target, rng)
+		var target := maxi(min_path_len, mini(free_count - reserve, ideal + jitter))
+		var path := _grow_snake(size, free, target, rng, min_manh)
 		if path.is_empty():
 			return {}
 		for cell: Vector2i in path:
@@ -2507,25 +2443,39 @@ static func _try_build(
 			free.erase(cell)
 		paths[color] = path
 
-	_absorb_free_cells(size, free, paths, assignment)
+	_absorb_free_cells(size, free, paths, assignment, min_manh)
 
-	# Cobertura sobre área jugable (sin obstáculos).
-	var covered := free_start - free.size()
-	var cover := float(covered) / float(maxi(1, free_start))
+	# Tras absorber, revalidar extremos.
+	for color_v: Variant in paths.keys():
+		var p_v: Variant = paths[color_v]
+		if typeof(p_v) != TYPE_ARRAY:
+			return {}
+		var p: Array = p_v
+		if p.size() < min_path_len:
+			return {}
+		var a: Vector2i = p[0]
+		var b: Vector2i = p[p.size() - 1]
+		if _cells_manhattan(a, b) < min_manh:
+			return {}
+
+	var cover := float(total - free.size()) / float(total)
 	if cover < min_cover:
 		return {}
 
-	var level := _level_from_assignment(level_id, name, size, assignment)
-	if level.is_empty():
-		return {}
-	if not obstacles.is_empty():
-		level["obstacles"] = obstacles.duplicate(true)
-	return level
+	return _level_from_assignment(level_id, name, size, assignment, min_manh)
 
 
 ## Alarga los extremos de cada serpiente hacia celdas libres vecinas mientras
 ## el camino siga siendo una serpiente simple (sin tocarse a sí mismo).
-static func _absorb_free_cells(size: int, free: Dictionary, paths: Dictionary, assignment: Dictionary) -> void:
+## No acerca extremos por debajo de min_endpoint_manhattan.
+static func _absorb_free_cells(
+	size: int,
+	free: Dictionary,
+	paths: Dictionary,
+	assignment: Dictionary,
+	min_endpoint_manhattan: int = 2
+) -> void:
+	var min_manh := maxi(2, min_endpoint_manhattan)
 	var changed := true
 	while changed and not free.is_empty():
 		changed = false
@@ -2539,6 +2489,10 @@ static func _absorb_free_cells(size: int, free: Dictionary, paths: Dictionary, a
 					if not _in_bounds(nxt, size) or not free.has(nxt):
 						continue
 					if not _extension_keeps_snake(nxt, tip, color, assignment):
+						continue
+					var new_a: Vector2i = nxt if at_head else path[0]
+					var new_b: Vector2i = path[path.size() - 1] if at_head else nxt
+					if _cells_manhattan(new_a, new_b) < min_manh:
 						continue
 					if at_head:
 						path.insert(0, nxt)
@@ -2564,7 +2518,8 @@ static func _level_from_assignment(
 	level_id: int,
 	name: String,
 	size: int,
-	assignment: Dictionary
+	assignment: Dictionary,
+	min_endpoint_manhattan: int = 2
 ) -> Dictionary:
 	var grouped: Dictionary = {} # color -> Array of Vector2i
 	for cell: Variant in assignment.keys():
@@ -2577,6 +2532,7 @@ static func _level_from_assignment(
 	var paths: Dictionary = {}
 	var dots: Array = []
 	var par := 0
+	var min_manh := maxi(2, min_endpoint_manhattan)
 
 	for color_name: Variant in grouped.keys():
 		var color := str(color_name)
@@ -2590,10 +2546,9 @@ static func _level_from_assignment(
 		var path_arrays: Array = []
 		for p: Vector2i in path:
 			path_arrays.append([p.x, p.y])
-		# Camino mínimo de 3 casillas ⇒ los extremos nunca son vecinos.
 		if path.size() < 3:
 			return {}
-		if _grid_cells_ortho_adjacent(path[0], path[path.size() - 1]):
+		if _cells_manhattan(path[0], path[path.size() - 1]) < min_manh:
 			return {}
 		paths[color] = path_arrays
 		dots.append({"color": color, "x": path[0].x, "y": path[0].y})
@@ -2610,8 +2565,12 @@ static func _level_from_assignment(
 	}
 
 
+static func _cells_manhattan(a: Vector2i, b: Vector2i) -> int:
+	return absi(a.x - b.x) + absi(a.y - b.y)
+
+
 static func _grid_cells_ortho_adjacent(a: Vector2i, b: Vector2i) -> bool:
-	return absi(a.x - b.x) + absi(a.y - b.y) == 1
+	return _cells_manhattan(a, b) == 1
 
 
 static func _trace_path(cells: Array[Vector2i]) -> Array[Vector2i]:
@@ -2662,15 +2621,18 @@ static func _grow_snake(
 	size: int,
 	free: Dictionary,
 	target_len: int,
-	rng: RandomNumberGenerator
+	rng: RandomNumberGenerator,
+	min_endpoint_manhattan: int = 2
 ) -> Array[Vector2i]:
 	var candidates: Array[Vector2i] = []
 	for key: Variant in free.keys():
 		candidates.append(key as Vector2i)
 	_shuffle_vector2i(candidates, rng)
 
+	var min_manh := maxi(2, min_endpoint_manhattan)
+	var min_len := maxi(3, min_manh + 1)
 	var best: Array[Vector2i] = []
-	var max_starts := mini(12, candidates.size())
+	var max_starts := mini(16, candidates.size())
 	for si in range(max_starts):
 		var path: Array[Vector2i] = [candidates[si]]
 		while path.size() < target_len:
@@ -2691,13 +2653,18 @@ static func _grow_snake(
 				break
 			var chosen := _pick_lowest_exit(opts, size, free, path, rng)
 			path.append(chosen)
+		if path.size() < min_len:
+			continue
+		if _cells_manhattan(path[0], path[path.size() - 1]) < min_manh:
+			continue
 		if path.size() > best.size():
 			best = path
 		if best.size() >= target_len:
 			break
 
-	# Al menos 3 celdas: los extremos (bolas) no pueden quedar pegados.
-	if best.size() < 3:
+	if best.size() < min_len:
+		return []
+	if _cells_manhattan(best[0], best[best.size() - 1]) < min_manh:
 		return []
 	return best
 

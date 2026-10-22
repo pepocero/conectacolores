@@ -1,101 +1,121 @@
 class_name CartoonExplosionFx
-extends ColorRect
+extends Node2D
 
-## Explosión cartoon en el centro de una casilla (una bola).
-## Origen: https://godotshaders.com/shader/cartoon-explosion-effect/
-## Móvil: shader lite (sin worley/grad) + half-res (fill-rate).
+## Explosión 2D liviana: flipbook 8×8 (sprite sheet).
+## Misma API que el boom anterior (setup_at / start_explosion / seconds_until_peak_size).
 
-const SHADER := preload("res://shaders/cartoon_explosion.gdshader")
-const SHADER_LITE := preload("res://shaders/cartoon_explosion_lite.gdshader")
-const BoardDestroyFxScript := preload("res://scripts/board_destroy_fx.gd")
-const MOBILE_DRAW_SCALE := 0.5
-## Tween de start_explosion: explosion_time 0 → este valor.
-const EXPLOSION_TIME_END := 1.95
-## Con boom_repeat=1, el radio del fuego es máximo en explosion_time=0.25
-## (máx. de r*(1-2r) en el shader boom()).
-const PEAK_SIZE_EXPLOSION_TIME := 0.25
+const SHEET := preload("res://assets/fx/ball_explosion_sheet.png")
+const COLS := 8
+const ROWS := 8
+const FRAME_COUNT := COLS * ROWS
+## Pico visual ≈ segundo flash (hacia la fila 5 del sheet).
+const PEAK_FRAC := 0.55
+const ANIM_NAME := &"boom"
+## FPS base del SpriteFrames; start_explosion ajusta speed_scale.
+const BASE_FPS := 24.0
+## Fracción del frame que ocupa el fuego (el resto es margen negro).
+## Así `diameter` ≈ tamaño visual real en pantalla.
+const SHEET_CONTENT_FRAC := 0.52
 
-var _mat: ShaderMaterial
+static var _shared_frames: SpriteFrames
+
+var _sprite: AnimatedSprite2D
+var _mat: CanvasItemMaterial
 
 
-## Segundos desde el inicio del boom hasta el tamaño máximo del fuego.
+## Segundos desde el inicio hasta el tamaño máximo (handoff era / rotura).
 static func seconds_until_peak_size(duration_sec: float) -> float:
-	var dur := maxf(0.35, duration_sec)
-	return dur * (PEAK_SIZE_EXPLOSION_TIME / EXPLOSION_TIME_END)
+	return maxf(0.35, duration_sec) * PEAK_FRAC
+
+
+static func _get_shared_frames() -> SpriteFrames:
+	if _shared_frames != null:
+		return _shared_frames
+	var frames := SpriteFrames.new()
+	frames.add_animation(ANIM_NAME)
+	frames.set_animation_loop(ANIM_NAME, false)
+	frames.set_animation_speed(ANIM_NAME, BASE_FPS)
+	var tex: Texture2D = SHEET
+	var fw := float(tex.get_width()) / float(COLS)
+	var fh := float(tex.get_height()) / float(ROWS)
+	for i in range(FRAME_COUNT):
+		var atlas := AtlasTexture.new()
+		atlas.atlas = tex
+		atlas.region = Rect2(float(i % COLS) * fw, float(int(i / COLS)) * fh, fw, fh)
+		frames.add_frame(ANIM_NAME, atlas)
+	_shared_frames = frames
+	return _shared_frames
 
 
 func _init() -> void:
-	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_mat = ShaderMaterial.new()
-	_mat.shader = SHADER
-	material = _mat
+	z_as_relative = false
+	_mat = CanvasItemMaterial.new()
+	_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_sprite = AnimatedSprite2D.new()
+	_sprite.centered = true
+	_sprite.material = _mat
+	_sprite.sprite_frames = _get_shared_frames()
+	_sprite.visible = false
+	_sprite.animation_finished.connect(_on_anim_finished)
+	add_child(_sprite)
 	visible = false
 
 
-## draw_scale_override > 0: fuerza undersample (p. ej. cinemática era / muchas bolas).
-## force_lite_override: -1 = auto (FxQuality/móvil), 0 = completo, 1 = lite.
+## draw_scale_override > 0: escala extra (era / muchas bolas). force_lite se ignora.
 func setup_at(
 	center: Vector2,
 	diameter: float,
 	tint: Color = Color.WHITE,
 	draw_scale_override: float = -1.0,
-	force_lite_override: int = -1
+	_force_lite_override: int = -1
 ) -> void:
+	if top_level:
+		global_position = center
+	else:
+		position = center
+
+	var frames := _get_shared_frames()
+	_sprite.sprite_frames = frames
+	var tex0: Texture2D = frames.get_frame_texture(ANIM_NAME, 0)
+	var frame_side := 64.0
+	if tex0 != null:
+		frame_side = float(maxi(tex0.get_width(), tex0.get_height()))
+
 	var visual_side := maxf(diameter, 20.0)
-	var mobile := BoardDestroyFxScript.is_mobile_device()
-	var draw_scale := 1.0
-	if draw_scale_override > 0.0:
-		draw_scale = clampf(draw_scale_override, 0.2, 1.0)
-	elif FxQuality != null:
-		draw_scale = FxQuality.destroy_draw_scale()
-	elif mobile:
-		draw_scale = MOBILE_DRAW_SCALE
-	var side := visual_side * draw_scale
-	size = Vector2(side, side)
-	custom_minimum_size = size
-	scale = Vector2(1.0 / draw_scale, 1.0 / draw_scale) if draw_scale < 0.999 else Vector2.ONE
-	# Esquina superior-izquierda del rectángulo visual (tras scale).
-	position = center - Vector2(visual_side, visual_side) * 0.5
-	color = Color(1, 1, 1, 1)
-	modulate = Color(1, 1, 1, 1)
-	var use_lite := false
-	if force_lite_override >= 0:
-		use_lite = force_lite_override > 0
-	elif FxQuality != null:
-		use_lite = FxQuality.use_lite_shader()
-	else:
-		use_lite = mobile
-	if use_lite and SHADER_LITE != null:
-		_mat.shader = SHADER_LITE
-	else:
-		_mat.shader = SHADER
-	_mat.set_shader_parameter("aspect", 1.0)
-	_mat.set_shader_parameter("size", 3.6)
-	_mat.set_shader_parameter("explosion_time", 0.0)
-	_mat.set_shader_parameter("boom_pal1", Vector3(tint.r * 0.35, tint.g * 0.25, tint.b * 0.4))
-	_mat.set_shader_parameter("boom_pal2", Vector3(tint.r, tint.g * 0.25, tint.b * 0.15))
-	_mat.set_shader_parameter("boom_pal3", Vector3(minf(1.0, tint.r * 1.1), minf(1.0, tint.g * 0.75 + 0.2), tint.b * 0.25))
-	_mat.set_shader_parameter("boom_pal4", Vector3(0.98, 0.95, 0.55))
-	_mat.set_shader_parameter("smoke_pal1", Vector3(tint.r * 0.3, tint.g * 0.25, tint.b * 0.35))
-	_mat.set_shader_parameter("smoke_pal2", Vector3(tint.r * 0.45, tint.g * 0.4, tint.b * 0.5))
-	_mat.set_shader_parameter("smoke_pal3", Vector3(tint.r * 0.6, tint.g * 0.55, tint.b * 0.65))
+	# Compensar margen negro del sheet para que el fuego ≈ `diameter`.
+	var s := visual_side / maxf(frame_side * SHEET_CONTENT_FRAC, 1.0)
+	# draw_scale_override ya no reduce el tamaño (era undersample del shader).
+	if draw_scale_override > 0.0 and draw_scale_override < 0.999:
+		s *= clampf(lerpf(0.85, 1.0, draw_scale_override), 0.85, 1.0)
+	_sprite.scale = Vector2(s, s)
 
-
-## Arranca la animación (no hace falta await: el tablero espera el mismo tiempo).
-func start_explosion(duration_sec: float) -> void:
-	if _mat == null:
-		return
-	visible = true
-	_mat.set_shader_parameter("explosion_time", 0.0)
-	var dur := maxf(0.35, duration_sec)
-	var tw := create_tween()
-	tw.tween_method(_set_explosion_time, 0.0, 1.95, dur).set_trans(Tween.TRANS_LINEAR)
-	tw.tween_callback(func() -> void:
-		if is_instance_valid(self):
-			visible = false
+	# Tint suave: no apagar el amarillo/naranja del sheet.
+	var m := Color(
+		lerpf(1.0, tint.r, 0.35),
+		lerpf(1.0, tint.g, 0.35),
+		lerpf(1.0, tint.b, 0.35),
+		1.0
 	)
+	modulate = m
+	_sprite.modulate = Color.WHITE
+	_sprite.visible = false
+	visible = true
 
 
-func _set_explosion_time(t: float) -> void:
-	if _mat != null:
-		_mat.set_shader_parameter("explosion_time", t)
+func start_explosion(duration_sec: float) -> void:
+	if _sprite == null:
+		return
+	var dur := maxf(0.35, duration_sec)
+	_sprite.sprite_frames = _get_shared_frames()
+	_sprite.visible = true
+	visible = true
+	# Reproducir los 64 frames en `dur` segundos.
+	_sprite.speed_scale = (float(FRAME_COUNT) / dur) / BASE_FPS
+	_sprite.frame = 0
+	_sprite.play(ANIM_NAME)
+
+
+func _on_anim_finished() -> void:
+	if is_instance_valid(_sprite):
+		_sprite.visible = false
+	visible = false

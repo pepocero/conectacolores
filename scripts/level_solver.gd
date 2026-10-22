@@ -8,8 +8,6 @@ extends RefCounted
 
 const DEFAULT_BUDGET := 2500
 const FREE := -1
-## Casilla obstáculo (impensable); distinta de FREE y de índices de color.
-const BLOCKED := -2
 
 var _size := 0
 var _grid := PackedInt32Array()
@@ -39,18 +37,6 @@ func run(level: Dictionary, budget: int = DEFAULT_BUDGET) -> Dictionary:
 	_comp.resize(cells)
 	_queue.resize(cells)
 
-	var obstacles_v: Variant = level.get("obstacles", null)
-	if typeof(obstacles_v) == TYPE_ARRAY:
-		for obs_v: Variant in obstacles_v:
-			if typeof(obs_v) != TYPE_DICTIONARY:
-				continue
-			var od: Dictionary = obs_v
-			var ox := int(od.get("x", -1))
-			var oy := int(od.get("y", -1))
-			if ox < 0 or oy < 0 or ox >= _size or oy >= _size:
-				continue
-			_grid[oy * _size + ox] = BLOCKED
-
 	var by_color: Dictionary = {}
 	var dots: Variant = level.get("dots", [])
 	if typeof(dots) != TYPE_ARRAY:
@@ -62,8 +48,6 @@ func run(level: Dictionary, budget: int = DEFAULT_BUDGET) -> Dictionary:
 		var x := int(dot.get("x", -1))
 		var y := int(dot.get("y", -1))
 		if x < 0 or y < 0 or x >= _size or y >= _size:
-			return {"solved": false, "nodes": 0, "aborted": false}
-		if _grid[y * _size + x] == BLOCKED:
 			return {"solved": false, "nodes": 0, "aborted": false}
 		var color := str(dot.get("color", ""))
 		if not by_color.has(color):

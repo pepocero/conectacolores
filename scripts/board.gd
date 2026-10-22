@@ -35,8 +35,6 @@ var endpoints: Dictionary = {} # Vector2i -> String color
 var connections: Dictionary = {} # String color -> Connection
 var solution: Dictionary = {} # String color -> Array[Vector2i]
 var occupied: Dictionary = {} # Vector2i -> String color
-## Casillas bloqueadas (Modo Difícil): no se puede trazar ni colocar bola.
-var obstacles: Dictionary = {} # Vector2i -> true
 
 var moves: int = 0
 var active_color: String = ""
@@ -113,7 +111,6 @@ func setup_level(level_data: Dictionary) -> void:
 	connections.clear()
 	occupied.clear()
 	solution.clear()
-	obstacles.clear()
 	moves = 0
 	active_color = ""
 	is_dragging = false
@@ -141,19 +138,10 @@ func setup_level(level_data: Dictionary) -> void:
 	_clear_cartoon_booms()
 	_set_level_bg_fx_paused(false)
 
-	var raw_obstacles: Array = level_data.get("obstacles", [])
-	for obs_v: Variant in raw_obstacles:
-		if typeof(obs_v) != TYPE_DICTIONARY:
-			continue
-		var od: Dictionary = obs_v
-		obstacles[Vector2i(int(od.get("x", 0)), int(od.get("y", 0)))] = true
-
 	var dots: Array = level_data.get("dots", [])
 	for dot: Variant in dots:
 		var color_name := str(dot.get("color", ""))
 		var pos := Vector2i(int(dot.get("x", 0)), int(dot.get("y", 0)))
-		if obstacles.has(pos):
-			continue
 		endpoints[pos] = color_name
 		if not connections.has(color_name):
 			connections[color_name] = Connection.new(color_name)
@@ -317,8 +305,6 @@ func chaos_recolor(rng: RandomNumberGenerator = null) -> Dictionary:
 	for entry: Dictionary in completed_paths:
 		for c: Vector2i in entry["cells"]:
 			blocked.append(c)
-	for obs_cell: Vector2i in obstacles.keys():
-		blocked.append(obs_cell)
 
 	# Reservar colores para completadas antes de regenerar el resto.
 	var palette: Array[String] = LevelGenerator.COLOR_NAMES.duplicate()
@@ -600,8 +586,6 @@ func _on_press(local_pos: Vector2) -> void:
 	var cell := _pos_to_cell(local_pos)
 	if not _in_bounds(cell):
 		return
-	if obstacles.has(cell):
-		return
 
 	if endpoints.has(cell):
 		var color_name: String = endpoints[cell]
@@ -751,8 +735,6 @@ func _on_release() -> void:
 
 
 func _can_enter(cell: Vector2i, color_name: String) -> bool:
-	if obstacles.has(cell):
-		return false
 	if occupied.has(cell):
 		return false
 	if endpoints.has(cell):
@@ -908,32 +890,28 @@ func _explode_all_endpoint_balls() -> void:
 	queue_redraw()
 
 	_clear_cartoon_booms()
-	# ~95% de la casilla. Todas las bolas explotan; si hay muchas, baja draw_scale/lite.
+	# Flipbook 2D: el fuego visible ≈ 95% de la casilla (FX compensa margen del sheet).
 	var diameter := cell_size * 0.95
 	var cells: Array[Vector2i] = []
 	for cell_v: Variant in endpoints.keys():
 		cells.append(cell_v as Vector2i)
 	var boom_n := cells.size()
-	var draw_scale := 0.5
-	var force_lite := 1
+	var draw_scale := -1.0
 	var dur := LEVEL_COMPLETE_EXPLOSION_SEC
 	if FxQuality != null:
 		draw_scale = FxQuality.boom_draw_scale(boom_n)
-		force_lite = 1 if FxQuality.boom_force_lite(boom_n) else 0
 		dur = LEVEL_COMPLETE_EXPLOSION_SEC * FxQuality.boom_duration_scale(boom_n)
 	elif BoardDestroyFx.is_mobile_device():
 		draw_scale = 0.5 if boom_n <= 6 else (0.35 if boom_n <= 12 else 0.25)
-		force_lite = 1
 	else:
 		draw_scale = 1.0 if boom_n <= 12 else 0.45
-		force_lite = 1 if boom_n > 12 else 0
 	for cell: Vector2i in cells:
 		var color_name := str(endpoints[cell])
 		var tint := GamePalette.get_color(color_name)
 		var fx: CartoonExplosionFx = CartoonExplosionFxScript.new()
 		fx.z_index = 50
 		add_child(fx)
-		fx.setup_at(_cell_center(cell), diameter, tint, draw_scale, force_lite)
+		fx.setup_at(_cell_center(cell), diameter, tint, draw_scale)
 		_cartoon_booms.append(fx)
 		fx.start_explosion(dur)
 
@@ -1060,7 +1038,6 @@ func _build_empty_board_texture() -> Texture2D:
 	var cell_px := maxi(1, int(round(cell_size)))
 	var cell_col := _composite_over(board_col, BoardTheme.cell_fill(lid))
 	# Tablero con colores: casilla ≠ bola. Off: mismo color de casilla del tema.
-	# Obstáculos: bloque oscuro (misma idea que _draw_obstacles).
 	for y: int in range(grid_size):
 		for x: int in range(grid_size):
 			var cx := ox + x * cell_px + inset
@@ -1068,9 +1045,7 @@ func _build_empty_board_texture() -> Texture2D:
 			var cw := maxi(1, cell_px - inset * 2)
 			var cell := Vector2i(x, y)
 			var painted: Color
-			if obstacles.has(cell):
-				painted = Color(0.28, 0.26, 0.32, 1.0)
-			elif _uses_colored_board():
+			if _uses_colored_board():
 				painted = _cell_display_color(cell, cell_col)
 			else:
 				painted = cell_col
@@ -1306,7 +1281,6 @@ func _draw() -> void:
 		return
 	_draw_background()
 	_draw_grid()
-	_draw_obstacles()
 	_draw_paths()
 	_draw_endpoints()
 	_draw_hint()
@@ -1336,15 +1310,12 @@ func _draw_grid() -> void:
 	var cell_color := BoardTheme.cell_fill(level_id)
 	for y: int in range(grid_size):
 		for x: int in range(grid_size):
-			var cell := Vector2i(x, y)
-			if obstacles.has(cell):
-				continue
 			var cell_rect := Rect2(
 				board_origin + Vector2(float(x) * cell_size + inset, float(y) * cell_size + inset),
 				Vector2(cell_size - inset * 2.0, cell_size - inset * 2.0)
 			)
 			var fill := (
-				_cell_display_color(cell, cell_color)
+				_cell_display_color(Vector2i(x, y), cell_color)
 				if _uses_colored_board()
 				else cell_color
 			)
@@ -1361,25 +1332,6 @@ func _draw_grid() -> void:
 		var y := clampf(board_origin.y + float(i) * cell_size, y0, y1)
 		draw_line(Vector2(x, y0), Vector2(x, y1), line_color, line_w, true)
 		draw_line(Vector2(x0, y), Vector2(x1, y), line_color, line_w, true)
-
-
-func _draw_obstacles() -> void:
-	if obstacles.is_empty():
-		return
-	var inset := cell_size * 0.12
-	var rock := Color(0.28, 0.26, 0.32, 1.0)
-	var edge := Color(0.12, 0.11, 0.14, 1.0)
-	var highlight := Color(0.45, 0.42, 0.48, 0.55)
-	for cell_v: Variant in obstacles.keys():
-		var cell: Vector2i = cell_v
-		var rect := Rect2(
-			board_origin + Vector2(float(cell.x) * cell_size + inset, float(cell.y) * cell_size + inset),
-			Vector2(cell_size - inset * 2.0, cell_size - inset * 2.0)
-		)
-		draw_rect(rect, rock, true)
-		draw_rect(rect, edge, false, maxf(1.5, cell_size * 0.06))
-		var cap := Rect2(rect.position + Vector2(rect.size.x * 0.12, rect.size.y * 0.1), Vector2(rect.size.x * 0.55, rect.size.y * 0.22))
-		draw_rect(cap, highlight, true)
 
 
 func _draw_paths() -> void:

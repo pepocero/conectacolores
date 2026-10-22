@@ -11,7 +11,7 @@ const SANDBOX_CACHE_REV := 13
 ## Subir al cambiar la curva base de Hardcore (no invalida fácil/difícil).
 const HARDCORE_CACHE_REV := 2
 ## Subir al endurecer curva/picking de Difícil (invalida caché hard).
-const HARD_CACHE_REV := 2
+const HARD_CACHE_REV := 7
 ## Subir al cambiar curva/picking de Modo Crazy (invalida caché chrono).
 const CHRONO_CACHE_REV := 2
 ## Subir al cambiar pack/caras de Modo Rubik (invalida caché rubik).
